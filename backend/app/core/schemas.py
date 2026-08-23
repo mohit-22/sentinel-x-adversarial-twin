@@ -1,9 +1,9 @@
 """Pydantic v2 data contracts for Sentinel-X (CLAUDE.md §6 — exact, do not modify)."""
 
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class CustomerProfile(BaseModel):
@@ -35,3 +35,11 @@ class TransactionBase(BaseModel):
     merchant_category: str
     semantic_risk_score: float = 0.0  # [0.0, 1.0]
     voice_confidence_score: float = 1.0  # [0.0, 1.0], lower = more convincing deepfake
+
+
+class InjectedTransaction(TransactionBase):
+    """A transaction after red-team attack injection (clean or fraudulent)."""
+
+    is_fraud: int = Field(default=0, ge=0, le=1)
+    attack_family: Optional[str] = None
+    genome_id: Optional[str] = None
