@@ -123,3 +123,104 @@ def test_injected_transaction_schema_validation(generated_attacks):
     assert len(validated) == len(attacks)
     fraud_validated = [v for v in validated if v.is_fraud == 1]
     assert len(fraud_validated) == (attacks["is_fraud"] == 1).sum()
+
+
+# ============================================================================
+# synthetic_identity_drift (ATK-ID-001) -- Day 6. Appended below; the
+# micro_structuring tests above are untouched.
+# ============================================================================
+
+from app.red_team.attack_genomes import SYNTHETIC_IDENTITY_DRIFT_GENOME  # noqa: E402
+from app.red_team.attack_injector import generate_identity_drift_attacks  # noqa: E402
+
+DRIFT_N_INSTANCES = 500
+DRIFT_WINDOW_RANGE = SYNTHETIC_IDENTITY_DRIFT_GENOME["parameters"]["drift_window_days_range"]
+EXTRACTION_COUNT_RANGE = SYNTHETIC_IDENTITY_DRIFT_GENOME["parameters"]["extraction_transaction_count_range"]
+EXTRACTION_WINDOW_HOURS = SYNTHETIC_IDENTITY_DRIFT_GENOME["parameters"]["extraction_window_hours"]
+MULTIPLIER_RANGE = SYNTHETIC_IDENTITY_DRIFT_GENOME["parameters"]["extraction_amount_multiplier_range"]
+
+
+@pytest.fixture(scope="module")
+def generated_drift_attacks():
+    merchants = generate_merchants(N_MERCHANTS, seed=SEED)
+    customers = generate_customer_profiles(N_CUSTOMERS, merchants, seed=SEED)
+    attacks = generate_identity_drift_attacks(
+        SYNTHETIC_IDENTITY_DRIFT_GENOME, customers, merchants, n_instances=DRIFT_N_INSTANCES, seed=SEED
+    )
+    return customers, merchants, attacks
+
+
+def test_drift_window_within_approved_range(generated_drift_attacks):
+    _, _, attacks = generated_drift_attacks
+    drift_per_instance = attacks.groupby("instance_id")["drift_window_days"].first()
+    assert len(drift_per_instance) == DRIFT_N_INSTANCES
+    assert drift_per_instance.between(*DRIFT_WINDOW_RANGE).all()
+
+
+def test_extraction_burst_count_and_timing(generated_drift_attacks):
+    _, _, attacks = generated_drift_attacks
+    counts = attacks.groupby("instance_id").size()
+    assert counts.between(*EXTRACTION_COUNT_RANGE).all()
+
+    def offsets_within_window(group):
+        start = group["timestamp"].min()
+        drift_days = group["drift_window_days"].iloc[0]
+        # extraction burst start = SIMULATION_START_DATE + drift_days; every
+        # row in the burst must land within extraction_window_hours of that.
+        from app.core.config import SIMULATION_START_DATE
+        burst_start = pd.Timestamp(SIMULATION_START_DATE) + pd.Timedelta(days=drift_days)
+        offsets_hours = (group["timestamp"] - burst_start).dt.total_seconds() / 3600
+        return offsets_hours.between(-1e-6, EXTRACTION_WINDOW_HOURS + 1e-6).all()
+
+    all_within = attacks.groupby("instance_id").apply(offsets_within_window, include_groups=False)
+    assert all_within.all()
+
+
+def test_extraction_amount_scales_with_customer_mean_spend(generated_drift_attacks):
+    customers, _, attacks = generated_drift_attacks
+    mean_spend_map = customers.set_index("customer_id")["mean_spend"]
+
+    totals = attacks.groupby("instance_id")["amount"].sum()
+    customer_per_instance = attacks.groupby("instance_id")["customer_id"].first()
+    achieved_multiplier = totals / customer_per_instance.map(mean_spend_map)
+
+    assert achieved_multiplier.between(*MULTIPLIER_RANGE).all()
+
+    # Real cross-tier check: at least two distinct income tiers represented,
+    # and achieved totals differ meaningfully (not a flat amount).
+    tier_map = customers.set_index("customer_id")["_income_tier"]
+    tiers_used = customer_per_instance.map(tier_map).unique()
+    assert len(tiers_used) >= 2
+    assert totals.std() > 0
+
+
+def test_drift_extraction_uses_distinct_prefixes_no_collision(generated_drift_attacks):
+    customers, _, attacks = generated_drift_attacks
+
+    assert attacks["device_id"].str.startswith("DRIFT-DEV-").all()
+    assert attacks["beneficiary_id"].str.startswith("DRIFT-PAYEE-").all()
+
+    primary_devices_map = customers.set_index("customer_id")["primary_devices"]
+    usual_beneficiaries_map = customers.set_index("customer_id")["usual_beneficiaries"]
+    device_collision = attacks.apply(lambda r: r["device_id"] in primary_devices_map[r["customer_id"]], axis=1)
+    beneficiary_collision = attacks.apply(
+        lambda r: r["beneficiary_id"] in usual_beneficiaries_map[r["customer_id"]], axis=1
+    )
+    assert not device_collision.any()
+    assert not beneficiary_collision.any()
+
+
+def test_drift_injected_transaction_schema_validation(generated_drift_attacks):
+    _, _, attacks = generated_drift_attacks
+    validated = validate_injected_transactions(attacks)
+    assert len(validated) == len(attacks)
+
+
+def test_drift_fraud_fields_set_correctly(generated_drift_attacks):
+    _, _, attacks = generated_drift_attacks
+    # This injector only ever emits the extraction burst -- the customer's
+    # real pre-existing history is a separate DataFrame entirely (approved
+    # design decision F), so every row here must be fraud-labeled.
+    assert (attacks["is_fraud"] == 1).all()
+    assert (attacks["attack_family"] == "synthetic_identity_drift").all()
+    assert (attacks["genome_id"] == "ATK-ID-001").all()

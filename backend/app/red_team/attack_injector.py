@@ -1,6 +1,7 @@
-"""Genome -> injected transactions for the micro_structuring attack family.
+"""Genome -> injected transactions, for micro_structuring (ATK-MS-001) and
+synthetic_identity_drift (ATK-ID-001).
 
-A deterministic Python simulator converts the ATK-MS-001 genome into actual
+A deterministic Python simulator converts each genome into actual
 transaction rows (CLAUDE.md §3 design rule: no LLM ever scores or decides
 here). Reuses clean_generator.py's customer/merchant generation and its
 per-customer amount-sampling function directly rather than reimplementing
@@ -240,7 +241,112 @@ def generate_micro_structuring_attacks(
     return pd.concat(instances, ignore_index=True)
 
 
+def generate_identity_drift_instance(
+    genome: Dict,
+    customer: pd.Series,
+    merchants: pd.DataFrame,
+    instance_id: int,
+    start_time: pd.Timestamp,
+    seed: int,
+) -> pd.DataFrame:
+    """Generate the extraction-burst rows for one synthetic_identity_drift
+    instance targeting one customer, per the ATK-ID-001 genome.
+
+    `start_time` is the extraction burst's own start (i.e. already offset by
+    the drift window) -- no rows are generated for the drift/trust-building
+    period itself. That period is real: the customer's actual Day 1-2 clean
+    transaction history structurally plays that role (approved design
+    decision F), so this function only ever emits is_fraud=1 rows.
+    """
+    np.random.seed(seed)
+    params = genome["parameters"]
+
+    extraction_count = int(
+        np.random.randint(
+            params["extraction_transaction_count_range"][0],
+            params["extraction_transaction_count_range"][1] + 1,
+        )
+    )
+    window_hours = params["extraction_window_hours"]
+    offsets_hours = np.sort(np.random.uniform(0, window_hours, size=extraction_count))
+    timestamps = start_time + pd.to_timedelta(offsets_hours, unit="h")
+
+    multiplier = np.random.uniform(*params["extraction_amount_multiplier_range"])
+    total_extraction_amount = customer["mean_spend"] * multiplier
+    # Moderate concentration (3.0): random but not wildly skewed per-tx splits.
+    amounts = np.random.dirichlet(np.full(extraction_count, 3.0)) * total_extraction_amount
+
+    device_id = f"DRIFT-DEV-{instance_id:04d}-0"
+    beneficiary_id = f"DRIFT-PAYEE-{instance_id:04d}-0"
+    location = np.full(extraction_count, customer["base_location"])
+
+    fraud_df = pd.DataFrame(
+        {
+            "transaction_id": [f"ATKTXN-ID-{instance_id:04d}-E{k:02d}" for k in range(extraction_count)],
+            "timestamp": timestamps,
+            "customer_id": customer["customer_id"],
+            "merchant_id": FRAUD_MERCHANT_ID,
+            "beneficiary_id": beneficiary_id,
+            "amount": amounts,
+            "currency": "INR",
+            "channel": "P2P",
+            "device_id": device_id,
+            "ip_region": location,
+            "location": location,
+            "merchant_category": FRAUD_MERCHANT_CATEGORY,
+            "semantic_risk_score": 0.0,
+            "voice_confidence_score": 1.0,
+            "is_fraud": 1,
+            "attack_family": genome["family"],
+            "genome_id": genome["genome_id"],
+        }
+    )
+    return fraud_df.sort_values("timestamp").reset_index(drop=True)
+
+
+def generate_identity_drift_attacks(
+    genome: Dict,
+    customers: pd.DataFrame,
+    merchants: pd.DataFrame,
+    n_instances: int,
+    seed: int = SEED,
+) -> pd.DataFrame:
+    """Top-level entry point: inject n_instances synthetic_identity_drift
+    attacks, one per distinct randomly sampled customer.
+
+    Unlike generate_micro_structuring_attacks, the extraction burst is NOT
+    placed at a random offset across the full 30-day simulation -- it's
+    anchored to drift_window_days after SIMULATION_START_DATE (the genome's
+    own definition: ~20 days of real trust-building history, then a sudden
+    extraction). drift_window_days_range's upper bound (22) plus
+    extraction_window_hours (a few hours) always comfortably fits inside
+    SIMULATION_DAYS (30), so no capping is needed here the way family #1
+    needed max_start_offset_days.
+    """
+    np.random.seed(seed)
+    params = genome["parameters"]
+
+    customer_positions = np.random.choice(len(customers), size=n_instances, replace=False)
+    drift_days = np.random.uniform(
+        params["drift_window_days_range"][0], params["drift_window_days_range"][1], size=n_instances
+    )
+    base = pd.Timestamp(SIMULATION_START_DATE)
+
+    instances: List[pd.DataFrame] = []
+    for i, (pos, drift) in enumerate(zip(customer_positions, drift_days)):
+        customer = customers.iloc[pos]
+        start_time = base + pd.to_timedelta(drift, unit="D")
+        instance_df = generate_identity_drift_instance(
+            genome, customer, merchants, instance_id=i, start_time=start_time, seed=seed + i + 1
+        )
+        instance_df["instance_id"] = i
+        instance_df["drift_window_days"] = drift  # diagnostic only, dropped before schema validation
+        instances.append(instance_df)
+
+    return pd.concat(instances, ignore_index=True)
+
+
 def validate_injected_transactions(df: pd.DataFrame) -> List[InjectedTransaction]:
     """Bulk Pydantic-boundary validation of injected transaction rows."""
-    records = df.drop(columns=["instance_id"], errors="ignore").to_dict(orient="records")
+    records = df.drop(columns=["instance_id", "drift_window_days"], errors="ignore").to_dict(orient="records")
     return TypeAdapter(List[InjectedTransaction]).validate_python(records)
