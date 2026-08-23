@@ -2,9 +2,9 @@
 gives an exact JSON; proposed and explicitly approved by the project owner
 where it only gives a prose description, never silently invented).
 
-micro_structuring (Day 3), synthetic_identity_drift, and
-behavioral_camouflage (Day 6) are in scope so far. The remaining 2 families
-are added one at a time in later phases.
+All 5 attack families are now in scope: micro_structuring (Day 3),
+synthetic_identity_drift, behavioral_camouflage, social_engineering_coercion,
+and synthetic_voice_authorization (Day 6).
 """
 
 MICRO_STRUCTURING_GENOME = {
@@ -64,4 +64,37 @@ BEHAVIORAL_CAMOUFLAGE_GENOME = {
         "use_real_merchant_and_channel": True,
     },
     "mutations": ["reduce_burst_density", "increase_camouflage_ratio", "match_customer_amount_profile"],
+}
+
+# CLAUDE.md §4.1 gives the exact genome_id ("ATK-SC-001") and real-world
+# framing (UPI Collect Request scams) for this family but no exact JSON
+# parameters -- family/objective/parameters/mutations below were proposed
+# and explicitly approved by the project owner (Day 6 planning turn).
+SOCIAL_ENGINEERING_COERCION_GENOME = {
+    "genome_id": "ATK-SC-001",
+    "family": "social_engineering_coercion",
+    "objective": "bypass_victim_judgment_via_semantic_coercion",
+    "parameters": {
+        "coercion_pretext_options": ["kyc_verification", "refund_claim", "cashback_offer", "bill_payment_reminder"],
+        "semantic_risk_score_range": [0.7, 0.95],
+        "reuse_customer_device": True,
+        "amount_source": "customer_normal_distribution",
+    },
+    "mutations": ["lower_semantic_risk_score", "vary_coercion_pretext", "combine_with_new_device"],
+}
+
+# CLAUDE.md §4.1 / SENTINEL_X_ADDENDUM.md Addition 1 give this genome's exact
+# JSON verbatim -- copied without modification, unlike families #2-4.
+SYNTHETIC_VOICE_AUTHORIZATION_GENOME = {
+    "genome_id": "ATK-VD-001",
+    "family": "synthetic_voice_authorization",
+    "objective": "bypass_step_up_authentication_via_impersonated_voice_call",
+    "parameters": {
+        "impersonated_role": ["bank_agent", "executive", "family_member"],
+        "urgency_score_range": [0.7, 0.95],
+        "requests_verification_bypass": True,
+        "channel": "voice_authorized",
+    },
+    "evasion_targets": ["step_up_challenge", "identity_verification"],
+    "mutations": ["vary_impersonated_role", "adjust_urgency_score", "combine_with_new_device"],
 }

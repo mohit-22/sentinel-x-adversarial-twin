@@ -328,3 +328,187 @@ def test_camouflage_injected_transaction_schema_validation(generated_camouflage_
     assert len(validated) == len(attacks)
     fraud_validated = [v for v in validated if v.is_fraud == 1]
     assert len(fraud_validated) == (attacks["is_fraud"] == 1).sum()
+
+
+# ============================================================================
+# social_engineering_coercion (ATK-SC-001) -- Day 6. Appended below; the
+# other three families' tests above are untouched.
+# ============================================================================
+
+from app.core.config import N_TRANSACTIONS, SIMULATION_DAYS  # noqa: E402
+from app.red_team.attack_genomes import SOCIAL_ENGINEERING_COERCION_GENOME  # noqa: E402
+from app.red_team.attack_injector import generate_social_engineering_attacks  # noqa: E402
+from app.simulator.clean_generator import generate_transaction_base  # noqa: E402
+
+SC_N_INSTANCES = 500
+SC_RISK_RANGE = SOCIAL_ENGINEERING_COERCION_GENOME["parameters"]["semantic_risk_score_range"]
+
+
+@pytest.fixture(scope="module")
+def generated_social_engineering_attacks():
+    merchants = generate_merchants(N_MERCHANTS, seed=SEED)
+    customers = generate_customer_profiles(N_CUSTOMERS, merchants, seed=SEED)
+    attacks = generate_social_engineering_attacks(
+        SOCIAL_ENGINEERING_COERCION_GENOME, customers, merchants, n_instances=SC_N_INSTANCES, seed=SEED
+    )
+    return customers, merchants, attacks
+
+
+def test_social_engineering_exactly_one_transaction_per_instance(generated_social_engineering_attacks):
+    """No burst, per CLAUDE.md's own "a structurally normal transaction" (singular)."""
+    _, _, attacks = generated_social_engineering_attacks
+    counts = attacks.groupby("instance_id").size()
+    assert len(counts) == SC_N_INSTANCES
+    assert (counts == 1).all()
+
+
+def test_social_engineering_uses_customers_own_device(generated_social_engineering_attacks):
+    customers, _, attacks = generated_social_engineering_attacks
+    primary_devices_map = customers.set_index("customer_id")["primary_devices"]
+    device_match = attacks.apply(lambda r: r["device_id"] in primary_devices_map[r["customer_id"]], axis=1)
+    assert device_match.all()
+
+
+def test_social_engineering_amount_resembles_customer_distribution(generated_social_engineering_attacks):
+    customers, _, attacks = generated_social_engineering_attacks
+    mean_spend_map = customers.set_index("customer_id")["mean_spend"]
+    ratio = attacks["amount"] / attacks["customer_id"].map(mean_spend_map)
+    # Should cluster near 1.0 (same distribution as the customer's own spend),
+    # not near a fixed unrelated value like family #1's amount band.
+    assert ratio.median() == pytest.approx(1.0, abs=0.5)
+
+
+def test_social_engineering_risk_score_range_and_zero_baseline_elsewhere(generated_social_engineering_attacks):
+    """Confirms both halves of the "zero baseline noise" claim: high on
+    this family's fraud rows, and (separately, across clean + all three
+    other families) exactly 0.0 everywhere else in the dataset.
+    """
+    customers, merchants, attacks = generated_social_engineering_attacks
+    assert attacks["semantic_risk_score"].between(*SC_RISK_RANGE).all()
+
+    clean = generate_transaction_base(customers, merchants, N_TRANSACTIONS, SIMULATION_DAYS, seed=SEED)
+    ms = generate_micro_structuring_attacks(MICRO_STRUCTURING_GENOME, customers, merchants, n_instances=500, seed=SEED)
+    idrift = generate_identity_drift_attacks(
+        SYNTHETIC_IDENTITY_DRIFT_GENOME, customers, merchants, n_instances=500, seed=SEED
+    )
+    camo = generate_behavioral_camouflage_attacks(
+        BEHAVIORAL_CAMOUFLAGE_GENOME, customers, merchants, n_instances=500, seed=SEED
+    )
+
+    assert (clean["semantic_risk_score"] == 0.0).all()
+    assert (ms["semantic_risk_score"] == 0.0).all()
+    assert (idrift["semantic_risk_score"] == 0.0).all()
+    assert (camo["semantic_risk_score"] == 0.0).all()
+
+
+def test_social_engineering_payee_prefix_and_no_collision(generated_social_engineering_attacks):
+    customers, _, attacks = generated_social_engineering_attacks
+    assert attacks["beneficiary_id"].str.startswith("COERCE-PAYEE-").all()
+    usual_beneficiaries_map = customers.set_index("customer_id")["usual_beneficiaries"]
+    collision = attacks.apply(lambda r: r["beneficiary_id"] in usual_beneficiaries_map[r["customer_id"]], axis=1)
+    assert collision.sum() == 0
+
+
+def test_social_engineering_channel_and_merchant_placeholder(generated_social_engineering_attacks):
+    _, _, attacks = generated_social_engineering_attacks
+    assert (attacks["channel"] == "P2P").all()
+    assert (attacks["merchant_id"] == "P2P-TRANSFER").all()
+
+
+def test_social_engineering_injected_transaction_schema_validation(generated_social_engineering_attacks):
+    _, _, attacks = generated_social_engineering_attacks
+    validated = validate_injected_transactions(attacks)
+    assert len(validated) == len(attacks)
+    assert all(v.is_fraud == 1 for v in validated)
+
+
+# ============================================================================
+# synthetic_voice_authorization (ATK-VD-001) -- Day 6, LAST attack family.
+# Appended below; all four other families' tests above are untouched.
+# ============================================================================
+
+from app.red_team.attack_genomes import SYNTHETIC_VOICE_AUTHORIZATION_GENOME  # noqa: E402
+from app.red_team.attack_injector import (  # noqa: E402
+    VOICE_AMOUNT_MULTIPLIER_RANGE,
+    VOICE_CONFIDENCE_SCORE_RANGE,
+    generate_voice_authorization_attacks,
+)
+
+VD_N_INSTANCES = 500
+VD_URGENCY_RANGE = SYNTHETIC_VOICE_AUTHORIZATION_GENOME["parameters"]["urgency_score_range"]
+
+
+@pytest.fixture(scope="module")
+def generated_voice_authorization_attacks():
+    merchants = generate_merchants(N_MERCHANTS, seed=SEED)
+    customers = generate_customer_profiles(N_CUSTOMERS, merchants, seed=SEED)
+    attacks = generate_voice_authorization_attacks(
+        SYNTHETIC_VOICE_AUTHORIZATION_GENOME, customers, merchants, n_instances=VD_N_INSTANCES, seed=SEED
+    )
+    return customers, merchants, attacks
+
+
+def test_voice_auth_exactly_one_transaction_per_instance(generated_voice_authorization_attacks):
+    _, _, attacks = generated_voice_authorization_attacks
+    counts = attacks.groupby("instance_id").size()
+    assert len(counts) == VD_N_INSTANCES
+    assert (counts == 1).all()
+
+
+def test_voice_auth_channel_is_voice_authorized(generated_voice_authorization_attacks):
+    _, _, attacks = generated_voice_authorization_attacks
+    assert (attacks["channel"] == "voice_authorized").all()
+
+
+def test_voice_auth_voice_confidence_score_in_range(generated_voice_authorization_attacks):
+    _, _, attacks = generated_voice_authorization_attacks
+    assert attacks["voice_confidence_score"].between(*VOICE_CONFIDENCE_SCORE_RANGE).all()
+    # Low values simulate a convincing deepfake -- confirm it's genuinely
+    # lower than the schema default (1.0), not left at default.
+    assert (attacks["voice_confidence_score"] < 1.0).all()
+
+
+def test_voice_auth_semantic_risk_score_matches_urgency_range(generated_voice_authorization_attacks):
+    _, _, attacks = generated_voice_authorization_attacks
+    assert attacks["semantic_risk_score"].between(*VD_URGENCY_RANGE).all()
+
+
+def test_voice_auth_device_camouflaged_in_base_genome(generated_voice_authorization_attacks):
+    """Base genome uses the customer's own device (is_new_device=0) --
+    combine_with_new_device is a mutation, not the default behavior.
+    """
+    customers, _, attacks = generated_voice_authorization_attacks
+    primary_devices_map = customers.set_index("customer_id")["primary_devices"]
+    device_match = attacks.apply(lambda r: r["device_id"] in primary_devices_map[r["customer_id"]], axis=1)
+    assert device_match.all()
+
+
+def test_voice_auth_amount_elevated_vs_customer_baseline(generated_voice_authorization_attacks):
+    """Core structural decision: amount is ELEVATED (unlike family #4's
+    camouflaged amount) to justify why step-up authentication would have
+    applied at all.
+    """
+    customers, _, attacks = generated_voice_authorization_attacks
+    mean_spend_map = customers.set_index("customer_id")["mean_spend"]
+    ratio = attacks["amount"] / attacks["customer_id"].map(mean_spend_map)
+    assert ratio.between(*VOICE_AMOUNT_MULTIPLIER_RANGE).all()
+
+    tier_map = customers.set_index("customer_id")["_income_tier"]
+    tiers_used = attacks["customer_id"].map(tier_map).unique()
+    assert len(tiers_used) >= 2  # cross-tier scaling, not a flat amount
+
+
+def test_voice_auth_payee_prefix_and_no_collision(generated_voice_authorization_attacks):
+    customers, _, attacks = generated_voice_authorization_attacks
+    assert attacks["beneficiary_id"].str.startswith("VOICE-PAYEE-").all()
+    usual_beneficiaries_map = customers.set_index("customer_id")["usual_beneficiaries"]
+    collision = attacks.apply(lambda r: r["beneficiary_id"] in usual_beneficiaries_map[r["customer_id"]], axis=1)
+    assert collision.sum() == 0
+
+
+def test_voice_auth_injected_transaction_schema_validation(generated_voice_authorization_attacks):
+    _, _, attacks = generated_voice_authorization_attacks
+    validated = validate_injected_transactions(attacks)
+    assert len(validated) == len(attacks)
+    assert all(v.is_fraud == 1 for v in validated)
+    assert all(v.channel == "voice_authorized" for v in validated)

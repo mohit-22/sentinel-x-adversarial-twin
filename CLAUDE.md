@@ -102,6 +102,18 @@ CURRENT PHASE: Day 6 — attack family #3 (Behavioral Camouflage) ONLY
 ALLOWED TO TOUCH: backend/app/red_team/attack_genomes.py (add genome #3, do not touch #1/#2), backend/app/red_team/attack_injector.py, backend/tests/test_red_team.py
 NOT ALLOWED TO TOUCH: arena.py, micro_structuring/identity_drift's existing code, blue_team/, frontend/
 
+
+
+CURRENT PHASE: Day 6 — attack family #4 (Social Engineering / Semantic Coercion) ONLY
+ALLOWED TO TOUCH: backend/app/red_team/attack_genomes.py (add genome #4, do not touch #1/#2/#3), backend/app/red_team/attack_injector.py, backend/tests/test_red_team.py
+NOT ALLOWED TO TOUCH: arena.py, existing families' code, blue_team/, frontend/
+
+
+
+CURRENT PHASE: Day 6 — attack family #5 (Synthetic Voice/Video Authorization Fraud) ONLY — LAST attack family
+ALLOWED TO TOUCH: backend/app/red_team/attack_genomes.py (add genome #5, do not touch #1-4), backend/app/red_team/attack_injector.py, backend/app/core/schemas.py (add voice_confidence_score field per addendum), backend/tests/test_red_team.py
+NOT ALLOWED TO TOUCH: arena.py, existing families' code, blue_team/, frontend/
+
 ```
 CURRENT PHASE: [not started]
 ALLOWED TO TOUCH: [nothing yet — set this before Day 1]
