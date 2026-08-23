@@ -7,3 +7,5 @@ pytest
 lightgbm
 scikit-learn
 networkx
+fastapi
+uvicorn

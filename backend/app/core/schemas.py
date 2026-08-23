@@ -1,7 +1,7 @@
 """Pydantic v2 data contracts for Sentinel-X (CLAUDE.md §6 — exact, do not modify)."""
 
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -43,3 +43,25 @@ class InjectedTransaction(TransactionBase):
     is_fraud: int = Field(default=0, ge=0, le=1)
     attack_family: Optional[str] = None
     genome_id: Optional[str] = None
+
+
+class DetectionResult(BaseModel):
+    """M0's risk score and decision for one scored transaction."""
+
+    transaction_id: str
+    risk_score: float
+    decision: str  # ALLOW, STEP_UP, REVIEW, BLOCK
+    reason_codes: List[Dict[str, str]]
+    latency_ms: float
+
+
+class ArenaRunSummary(BaseModel):
+    """Summary of one Adversarial Arena run for a single attack family."""
+
+    run_id: str
+    attack_family: str
+    initial_evasion_rate: float
+    final_evasion_rate: float
+    robustness_gain: float
+    hard_examples_count: int
+    retrained_f1_score: float

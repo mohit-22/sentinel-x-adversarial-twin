@@ -119,6 +119,17 @@ CURRENT PHASE: Day 6.5 — Genericize arena.py across all 5 attack families
 ALLOWED TO TOUCH: backend/app/red_team/arena.py, backend/app/red_team/attack_injector.py (only if a shared dispatcher/registry needs adding there), backend/tests/test_arena.py
 NOT ALLOWED TO TOUCH: attack_genomes.py (genomes are final, don't edit), families' individual generator functions (reuse them, don't rewrite them), blue_team/, frontend/
 
+
+
+CURRENT PHASE: Day 6 (final) — FastAPI wrapper around everything built so far
+ALLOWED TO TOUCH: backend/app/api/endpoints.py, backend/app/api/websocket.py (if needed), backend/tests/test_api.py
+NOT ALLOWED TO TOUCH: simulator/, red_team/, blue_team/ internals — call existing functions only, do not reimplement logic in route handlers; frontend/
+
+
+CURRENT PHASE: Day 7 — Frontend Screen 1 of 5: Command Center ONLY
+ALLOWED TO TOUCH: frontend/ (new directory), specifically frontend/src/app/, frontend/src/components/MetricCards.tsx, frontend/src/lib/api.ts
+NOT ALLOWED TO TOUCH: the other 4 screens, backend/ (already done, don't touch)
+
 ```
 CURRENT PHASE: [not started]
 ALLOWED TO TOUCH: [nothing yet — set this before Day 1]

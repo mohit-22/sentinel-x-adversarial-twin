@@ -17,7 +17,24 @@
       "Bash(PYTHONPATH=. python3 -m pytest tests/ -q)",
       "Bash(PYTHONPATH=. python3 -m pytest tests/test_arena.py -v)",
       "Bash(grep -n \"hard_examples_count\\\\|harvest_rejected_count\\\\|harvest_accepted_count\" -A0 /dev/null; echo \"\\(re-displaying prior full-scale run numbers for the report\\)\")",
-      "Read(//dev/**)"
+      "Read(//dev/**)",
+      "Bash(PYTHONPATH=. nohup python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000)",
+      "Bash(echo \"started with pid $!\")",
+      "Bash(disown)",
+      "Bash(timeout 60 bash -c ' *)",
+      "Bash(curl -s -X POST http://127.0.0.1:8000/api/v1/simulate -H \"Content-Type: application/json\" -d '{}')",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s http://127.0.0.1:8000/api/v1/metrics)",
+      "Bash(curl -s -X POST http://127.0.0.1:8000/api/v1/detect -H 'Content-Type: application/json' -d '{ *)",
+      "Bash(curl -s -w '\\\\nHTTP_STATUS:%{http_code}\\\\n' -X POST http://127.0.0.1:8000/api/v1/detect -H 'Content-Type: application/json' -d '{ *)",
+      "Bash(time curl -s -X POST http://127.0.0.1:8000/api/v1/arena/run -H \"Content-Type: application/json\" -d '{\"genome_id\": \"ATK-MS-001\", \"n_instances\": 20}')",
+      "Bash(time curl -s -X POST http://127.0.0.1:8000/api/v1/arena/run -H \"Content-Type: application/json\" -d '{\"genome_id\": \"ATK-MS-001\"}')",
+      "Bash(curl -s -w \"\\\\nHTTP_STATUS:%{http_code}\\\\n\" -X POST http://127.0.0.1:8000/api/v1/arena/run -H \"Content-Type: application/json\" -d '{\"genome_id\": \"ATK-FAKE-999\"}')",
+      "Bash(curl -s -w \"\\\\nHTTP_STATUS:%{http_code}\\\\n\" http://127.0.0.1:8000/api/v1/explain/TEST-TXN-0001)",
+      "Bash(curl -s -w \"\\\\nHTTP_STATUS:%{http_code}\\\\n\" -X POST http://127.0.0.1:8000/api/v1/sandbox/compile -H \"Content-Type: application/json\" -d '{}')",
+      "Bash(kill 21569)",
+      "Bash(PYTHONPATH=. python3 -m pytest tests/test_api.py -v)",
+      "Bash(kill 22647)"
     ]
   }
 }
