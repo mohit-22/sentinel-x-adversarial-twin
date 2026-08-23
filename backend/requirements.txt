@@ -1,0 +1,6 @@
+pandas
+numpy
+faker
+pydantic
+scipy
+pytest
