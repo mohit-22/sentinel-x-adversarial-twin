@@ -95,9 +95,12 @@ ALLOWED TO TOUCH: backend/app/red_team/arena.py, backend/tests/test_arena.py
 NOT ALLOWED TO TOUCH: everything else — this is a single-file focus day
 
 
-CURRENT PHASE: Day 6 — attack family #2 (Synthetic Identity Drift) ONLY
-ALLOWED TO TOUCH: backend/app/red_team/attack_genomes.py (add genome #2, do not touch genome #1), backend/app/red_team/attack_injector.py, backend/tests/test_red_team.py
-NOT ALLOWED TO TOUCH: arena.py's internal logic (reuse it as-is), micro_structuring's existing code, blue_team/, frontend/
+
+
+
+CURRENT PHASE: Day 6 — attack family #3 (Behavioral Camouflage) ONLY
+ALLOWED TO TOUCH: backend/app/red_team/attack_genomes.py (add genome #3, do not touch #1/#2), backend/app/red_team/attack_injector.py, backend/tests/test_red_team.py
+NOT ALLOWED TO TOUCH: arena.py, micro_structuring/identity_drift's existing code, blue_team/, frontend/
 
 ```
 CURRENT PHASE: [not started]

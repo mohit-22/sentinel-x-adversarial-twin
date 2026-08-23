@@ -2,8 +2,9 @@
 gives an exact JSON; proposed and explicitly approved by the project owner
 where it only gives a prose description, never silently invented).
 
-micro_structuring (Day 3) and synthetic_identity_drift (Day 6) are in scope
-so far. The remaining 3 families are added one at a time in later phases.
+micro_structuring (Day 3), synthetic_identity_drift, and
+behavioral_camouflage (Day 6) are in scope so far. The remaining 2 families
+are added one at a time in later phases.
 """
 
 MICRO_STRUCTURING_GENOME = {
@@ -44,4 +45,23 @@ SYNTHETIC_IDENTITY_DRIFT_GENOME = {
         "device_count": 1,
     },
     "mutations": ["extend_drift_window", "reduce_extraction_velocity", "reuse_known_device"],
+}
+
+# CLAUDE.md §4.1 only describes this family in prose ("fraudulent
+# transactions interleaved within authentic-looking spending bursts to
+# corrupt short-term anomaly baselines") -- no exact JSON is given. Every
+# parameter below was proposed and explicitly approved by the project owner
+# (Day 6 planning turn) rather than invented silently.
+BEHAVIORAL_CAMOUFLAGE_GENOME = {
+    "genome_id": "ATK-BC-001",
+    "family": "behavioral_camouflage",
+    "objective": "corrupt_short_term_anomaly_baseline_via_authentic_looking_burst",
+    "parameters": {
+        "burst_window_hours": 12,
+        "burst_transaction_count_range": [8, 15],
+        "fraud_leg_ratio": 0.3,
+        "reuse_customer_device": True,
+        "use_real_merchant_and_channel": True,
+    },
+    "mutations": ["reduce_burst_density", "increase_camouflage_ratio", "match_customer_amount_profile"],
 }

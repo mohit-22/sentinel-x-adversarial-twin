@@ -224,3 +224,107 @@ def test_drift_fraud_fields_set_correctly(generated_drift_attacks):
     assert (attacks["is_fraud"] == 1).all()
     assert (attacks["attack_family"] == "synthetic_identity_drift").all()
     assert (attacks["genome_id"] == "ATK-ID-001").all()
+
+
+# ============================================================================
+# behavioral_camouflage (ATK-BC-001) -- Day 6. Appended below; the
+# micro_structuring and synthetic_identity_drift tests above are untouched.
+# ============================================================================
+
+from app.red_team.attack_genomes import BEHAVIORAL_CAMOUFLAGE_GENOME  # noqa: E402
+from app.red_team.attack_injector import generate_behavioral_camouflage_attacks  # noqa: E402
+
+CAMO_N_INSTANCES = 500
+CAMO_BURST_COUNT_RANGE = BEHAVIORAL_CAMOUFLAGE_GENOME["parameters"]["burst_transaction_count_range"]
+CAMO_WINDOW_HOURS = BEHAVIORAL_CAMOUFLAGE_GENOME["parameters"]["burst_window_hours"]
+CAMO_FRAUD_RATIO = BEHAVIORAL_CAMOUFLAGE_GENOME["parameters"]["fraud_leg_ratio"]
+
+
+@pytest.fixture(scope="module")
+def generated_camouflage_attacks():
+    merchants = generate_merchants(N_MERCHANTS, seed=SEED)
+    customers = generate_customer_profiles(N_CUSTOMERS, merchants, seed=SEED)
+    attacks = generate_behavioral_camouflage_attacks(
+        BEHAVIORAL_CAMOUFLAGE_GENOME, customers, merchants, n_instances=CAMO_N_INSTANCES, seed=SEED
+    )
+    return customers, merchants, attacks
+
+
+def test_camouflage_burst_count_and_fraud_ratio(generated_camouflage_attacks):
+    _, _, attacks = generated_camouflage_attacks
+    counts = attacks.groupby("instance_id").size()
+    assert len(counts) == CAMO_N_INSTANCES
+    assert counts.between(*CAMO_BURST_COUNT_RANGE).all()
+
+    fraud_counts = attacks[attacks["is_fraud"] == 1].groupby("instance_id").size().reindex(counts.index, fill_value=0)
+    achieved_ratio = fraud_counts / counts
+    # Small-integer rounding means per-instance ratio varies; the achieved
+    # mean across 500 instances should sit close to the 0.3 target.
+    assert achieved_ratio.mean() == pytest.approx(CAMO_FRAUD_RATIO, abs=0.05)
+    assert (fraud_counts > 0).all()  # every instance has at least one fraud leg
+
+
+def test_camouflage_burst_within_window(generated_camouflage_attacks):
+    _, _, attacks = generated_camouflage_attacks
+
+    def span_hours(group):
+        return (group["timestamp"].max() - group["timestamp"].min()).total_seconds() / 3600
+
+    spans = attacks.groupby("instance_id").apply(span_hours, include_groups=False)
+    assert (spans <= CAMO_WINDOW_HOURS + 1e-6).all()
+
+
+def test_camouflage_fraud_legs_use_customers_own_device(generated_camouflage_attacks):
+    """Core mechanism: 0% novel devices on fraud rows (reuse_customer_device)."""
+    customers, _, attacks = generated_camouflage_attacks
+    fraud = attacks[attacks["is_fraud"] == 1]
+    primary_devices_map = customers.set_index("customer_id")["primary_devices"]
+    novel_device = fraud.apply(lambda r: r["device_id"] not in primary_devices_map[r["customer_id"]], axis=1)
+    assert novel_device.sum() == 0
+
+
+def test_camouflage_fraud_legs_avoid_p2p_transfer_placeholder(generated_camouflage_attacks):
+    """Core mechanism: fraud legs use real merchants/channels, never the
+    P2P-TRANSFER placeholder families #1/#2 use (use_real_merchant_and_channel).
+    """
+    _, _, attacks = generated_camouflage_attacks
+    fraud = attacks[attacks["is_fraud"] == 1]
+    assert (fraud["merchant_id"] != "P2P-TRANSFER").all()
+    assert (fraud["merchant_category"] != "p2p_transfer").all()
+    assert fraud["channel"].isin(["POS", "WEB", "P2P"]).all()
+    assert fraud["channel"].nunique() > 1  # genuinely uses the normal channel mix, not one fixed value
+
+
+def test_camouflage_fraud_amounts_close_to_customer_baseline(generated_camouflage_attacks):
+    """Core mechanism: fraud amounts statistically resemble the customer's
+    own normal spend, unlike family #1's distinct [2500,4800] band.
+    """
+    customers, _, attacks = generated_camouflage_attacks
+    fraud = attacks[attacks["is_fraud"] == 1]
+    mean_spend_map = customers.set_index("customer_id")["mean_spend"]
+
+    fraud_mean_per_customer = fraud.groupby("customer_id")["amount"].mean()
+    baseline_mean_per_customer = fraud_mean_per_customer.index.to_series().map(mean_spend_map)
+
+    # Ratio of fraud-leg mean amount to the customer's own mean_spend should
+    # cluster near 1.0 (same distribution), not near a fixed unrelated value.
+    ratio = fraud_mean_per_customer / baseline_mean_per_customer
+    assert ratio.median() == pytest.approx(1.0, abs=0.5)
+
+
+def test_camouflage_payee_prefix_and_no_collision(generated_camouflage_attacks):
+    customers, _, attacks = generated_camouflage_attacks
+    fraud = attacks[attacks["is_fraud"] == 1]
+    assert fraud["beneficiary_id"].str.startswith("CAMO-PAYEE-").all()
+
+    usual_beneficiaries_map = customers.set_index("customer_id")["usual_beneficiaries"]
+    collision = fraud.apply(lambda r: r["beneficiary_id"] in usual_beneficiaries_map[r["customer_id"]], axis=1)
+    assert collision.sum() == 0
+
+
+def test_camouflage_injected_transaction_schema_validation(generated_camouflage_attacks):
+    _, _, attacks = generated_camouflage_attacks
+    validated = validate_injected_transactions(attacks)
+    assert len(validated) == len(attacks)
+    fraud_validated = [v for v in validated if v.is_fraud == 1]
+    assert len(fraud_validated) == (attacks["is_fraud"] == 1).sum()
