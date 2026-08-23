@@ -11,7 +11,10 @@
       "Bash(touch /home/mohit/Desktop/MasterCard_AI_project_/backend/app/__init__.py /home/mohit/Desktop/MasterCard_AI_project_/backend/app/core/__init__.py /home/mohit/Desktop/MasterCard_AI_project_/backend/app/simulator/__init__.py /home/mohit/Desktop/MasterCard_AI_project_/backend/tests/__init__.py)",
       "Bash(PYTHONPATH=. python3 -m pytest tests/test_simulator.py -v)",
       "Bash(PYTHONPATH=. python3 -m pytest tests/test_red_team.py -v)",
-      "Bash(PYTHONPATH=. python3 -m pytest tests/ -v)"
+      "Bash(PYTHONPATH=. python3 -m pytest tests/ -v)",
+      "Bash(PYTHONPATH=. python3 -c ' *)",
+      "Bash(PYTHONPATH=. python3 -m pytest tests/test_blue_team.py -v)",
+      "Bash(PYTHONPATH=. python3 -m pytest tests/ -q)"
     ]
   }
 }
