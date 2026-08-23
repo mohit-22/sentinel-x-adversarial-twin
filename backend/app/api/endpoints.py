@@ -72,12 +72,19 @@ _GENOME_REGISTRY: Dict[str, Dict] = {
 
 _APP_STATE: Dict = {}
 
+# Most recent /arena/run result, this server lifetime only. Written ONLY as
+# a side effect of an actual /arena/run call -- /metrics never triggers a
+# run itself, and startup never populates this (stays None until the first
+# real arena run happens).
+_LATEST_ARENA_RUN: Optional[ArenaRunSummary] = None
+
 
 def initialize_app_state(seed: int = SEED) -> None:
     """Generate the payment twin, inject micro_structuring, run Day 4's
     full feature/train/test pipeline -- ONCE. Populates module-level
     _APP_STATE for all routes to reuse. Called from main.py's startup hook.
     """
+    global _LATEST_ARENA_RUN
     merchants = generate_merchants(N_MERCHANTS, seed=seed)
     customers = generate_customer_profiles(N_CUSTOMERS, merchants, seed=seed)
     clean_history = generate_transaction_base(customers, merchants, N_TRANSACTIONS, SIMULATION_DAYS, seed=seed)
@@ -100,6 +107,7 @@ def initialize_app_state(seed: int = SEED) -> None:
             "graph_features": result["graph_features"],
         }
     )
+    _LATEST_ARENA_RUN = None  # a fresh startup means no arena run has happened yet this session
 
 
 def _get_state() -> Dict:
@@ -228,7 +236,13 @@ def arena_run(request: ArenaRunRequest) -> ArenaRunSummary:
     (run_arena_mvp_gate). Response is strictly ArenaRunSummary's canonical
     7 fields -- mutation_breakdown/_diagnostics are still computed
     internally but not part of today's HTTP contract.
+
+    Side effect: writes the result to _LATEST_ARENA_RUN so /metrics can
+    surface it. This is the ONLY place that cache is written -- /metrics
+    never triggers a run itself.
     """
+    global _LATEST_ARENA_RUN
+
     genome = _GENOME_REGISTRY.get(request.genome_id)
     if genome is None:
         raise HTTPException(
@@ -254,7 +268,7 @@ def arena_run(request: ArenaRunRequest) -> ArenaRunSummary:
         seed=SEED,
         **kwargs,
     )
-    return ArenaRunSummary(
+    result = ArenaRunSummary(
         run_id=summary["run_id"],
         attack_family=summary["attack_family"],
         initial_evasion_rate=summary["initial_evasion_rate"],
@@ -263,6 +277,8 @@ def arena_run(request: ArenaRunRequest) -> ArenaRunSummary:
         hard_examples_count=summary["hard_examples_count"],
         retrained_f1_score=summary["retrained_f1_score"],
     )
+    _LATEST_ARENA_RUN = result
+    return result
 
 
 # --- 4. GET /explain/{transaction_id} -- Day 8 -------------------------------
@@ -290,11 +306,18 @@ class MetricsResponse(BaseModel):
     f1: float
     pr_auc: float
     fpr: float
+    test_set_size: int
+    # None means no /arena/run has happened yet this server session -- an
+    # honest "not computed yet" state, never a fabricated ARG value.
+    latest_arena_run: Optional[ArenaRunSummary] = None
 
 
 @router.get("/metrics", response_model=MetricsResponse)
 def metrics() -> MetricsResponse:
-    """Current global model (M0) metrics on Day 4's held-out test set."""
+    """Current global model (M0) metrics on Day 4's held-out test set,
+    plus the most recent /arena/run result if one has happened this
+    session (never triggers a run itself).
+    """
     state = _get_state()
     result = evaluate_detector(state["model"], state["test_df"], FEATURE_COLUMNS)
     return MetricsResponse(
@@ -303,6 +326,8 @@ def metrics() -> MetricsResponse:
         f1=result["f1"],
         pr_auc=result["pr_auc"],
         fpr=result["fpr"],
+        test_set_size=len(state["test_df"]),
+        latest_arena_run=_LATEST_ARENA_RUN,
     )
 
 

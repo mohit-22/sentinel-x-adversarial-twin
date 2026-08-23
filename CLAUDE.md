@@ -130,6 +130,11 @@ CURRENT PHASE: Day 7 — Frontend Screen 1 of 5: Command Center ONLY
 ALLOWED TO TOUCH: frontend/ (new directory), specifically frontend/src/app/, frontend/src/components/MetricCards.tsx, frontend/src/lib/api.ts
 NOT ALLOWED TO TOUCH: the other 4 screens, backend/ (already done, don't touch)
 
+
+CURRENT PHASE: Day 7-pre — extend MetricsResponse for Command Center KPIs
+ALLOWED TO TOUCH: backend/app/api/endpoints.py ONLY (MetricsResponse model + /metrics handler + a small in-memory "last arena run" cache)
+NOT ALLOWED TO TOUCH: everything else, including frontend/ (that resumes after this)
+
 ```
 CURRENT PHASE: [not started]
 ALLOWED TO TOUCH: [nothing yet — set this before Day 1]

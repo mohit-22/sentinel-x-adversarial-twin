@@ -34,7 +34,14 @@
       "Bash(curl -s -w \"\\\\nHTTP_STATUS:%{http_code}\\\\n\" -X POST http://127.0.0.1:8000/api/v1/sandbox/compile -H \"Content-Type: application/json\" -d '{}')",
       "Bash(kill 21569)",
       "Bash(PYTHONPATH=. python3 -m pytest tests/test_api.py -v)",
-      "Bash(kill 22647)"
+      "Bash(kill 22647)",
+      "Bash(sed -n '/^## 8\\\\. Frontend/,/^---/p' /home/mohit/Desktop/MasterCard_AI_project_/CLAUDE.md)",
+      "Bash(npm --version)",
+      "Bash(npx --version)",
+      "Bash(PYTHONPATH=. nohup python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8001)",
+      "Bash(curl -s http://127.0.0.1:8001/api/v1/metrics)",
+      "Bash(curl -s -X POST http://127.0.0.1:8001/api/v1/arena/run -H \"Content-Type: application/json\" -d '{\"genome_id\": \"ATK-BC-001\", \"n_instances\": 20}')",
+      "Bash(kill 23336)"
     ]
   }
 }

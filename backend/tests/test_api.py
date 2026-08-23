@@ -145,6 +145,38 @@ def test_metrics_returns_expected_shape(client):
     body = response.json()
     for key in ("precision", "recall", "f1", "pr_auc", "fpr"):
         assert 0.0 <= body[key] <= 1.0
+    assert isinstance(body["test_set_size"], int)
+    assert body["test_set_size"] > 0
+    assert "latest_arena_run" in body  # present as a key regardless of null/populated
+
+
+def test_metrics_latest_arena_run_is_null_on_fresh_server():
+    """Dedicated fresh TestClient (own startup) so this is NOT affected by
+    other tests' /arena/run calls against the shared `client` fixture --
+    a genuine "no arena run yet this session" check, not order-dependent.
+    """
+    with TestClient(app) as fresh_client:
+        response = fresh_client.get("/api/v1/metrics")
+    assert response.status_code == 200
+    assert response.json()["latest_arena_run"] is None
+
+
+def test_metrics_latest_arena_run_populates_after_arena_run(client):
+    """Sequential, order-independent: calls /arena/run with a small but
+    real n_instances, then confirms /metrics immediately reflects THAT
+    specific run (matching run_id/attack_family), not just "some" value.
+    """
+    arena_response = client.post("/api/v1/arena/run", json={"genome_id": "ATK-ID-001", "n_instances": 20})
+    assert arena_response.status_code == 200
+    arena_body = arena_response.json()
+
+    metrics_response = client.get("/api/v1/metrics")
+    assert metrics_response.status_code == 200
+    latest = metrics_response.json()["latest_arena_run"]
+    assert latest is not None
+    assert latest["run_id"] == arena_body["run_id"]
+    assert latest["attack_family"] == arena_body["attack_family"] == "synthetic_identity_drift"
+    assert latest["initial_evasion_rate"] == arena_body["initial_evasion_rate"]
 
 
 def test_explain_returns_501_not_a_crash(client):
