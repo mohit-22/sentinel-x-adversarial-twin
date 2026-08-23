@@ -77,6 +77,18 @@ CURRENT PHASE: Day 1-2 — Synthetic payment world
 ALLOWED TO TOUCH: backend/app/simulator/, backend/app/core/schemas.py, backend/app/core/config.py, backend/tests/test_simulator.py
 NOT ALLOWED TO TOUCH: red_team/, blue_team/, api/, frontend/
 
+
+CURRENT PHASE: Day 3 — micro_structuring attack family ONLY
+ALLOWED TO TOUCH: backend/app/red_team/attack_genomes.py, backend/app/red_team/attack_injector.py, backend/tests/test_red_team.py
+NOT ALLOWED TO TOUCH: the other 4 attack families, arena.py, blue_team/, frontend/, simulator/ (already done, don't touch it again)
+
+
+
+
+CURRENT PHASE: Day 4 — features.py + LightGBM baseline
+ALLOWED TO TOUCH: backend/app/blue_team/features.py, backend/app/blue_team/detector.py, backend/app/blue_team/graph_engine.py, backend/tests/test_blue_team.py
+NOT ALLOWED TO TOUCH: arena.py, remaining attack families, explainability.py, frontend/, simulator/ and red_team/ (already done, don't touch again)
+
 ```
 CURRENT PHASE: [not started]
 ALLOWED TO TOUCH: [nothing yet — set this before Day 1]
