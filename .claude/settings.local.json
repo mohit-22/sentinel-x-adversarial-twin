@@ -14,7 +14,10 @@
       "Bash(PYTHONPATH=. python3 -m pytest tests/ -v)",
       "Bash(PYTHONPATH=. python3 -c ' *)",
       "Bash(PYTHONPATH=. python3 -m pytest tests/test_blue_team.py -v)",
-      "Bash(PYTHONPATH=. python3 -m pytest tests/ -q)"
+      "Bash(PYTHONPATH=. python3 -m pytest tests/ -q)",
+      "Bash(PYTHONPATH=. python3 -m pytest tests/test_arena.py -v)",
+      "Bash(grep -n \"hard_examples_count\\\\|harvest_rejected_count\\\\|harvest_accepted_count\" -A0 /dev/null; echo \"\\(re-displaying prior full-scale run numbers for the report\\)\")",
+      "Read(//dev/**)"
     ]
   }
 }

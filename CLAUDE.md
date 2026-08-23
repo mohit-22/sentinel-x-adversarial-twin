@@ -89,6 +89,16 @@ CURRENT PHASE: Day 4 — features.py + LightGBM baseline
 ALLOWED TO TOUCH: backend/app/blue_team/features.py, backend/app/blue_team/detector.py, backend/app/blue_team/graph_engine.py, backend/tests/test_blue_team.py
 NOT ALLOWED TO TOUCH: arena.py, remaining attack families, explainability.py, frontend/, simulator/ and red_team/ (already done, don't touch again)
 
+
+CURRENT PHASE: Day 5 — Adversarial Arena — MVP GATE, do not rush
+ALLOWED TO TOUCH: backend/app/red_team/arena.py, backend/tests/test_arena.py
+NOT ALLOWED TO TOUCH: everything else — this is a single-file focus day
+
+
+CURRENT PHASE: Day 6 — attack family #2 (Synthetic Identity Drift) ONLY
+ALLOWED TO TOUCH: backend/app/red_team/attack_genomes.py (add genome #2, do not touch genome #1), backend/app/red_team/attack_injector.py, backend/tests/test_red_team.py
+NOT ALLOWED TO TOUCH: arena.py's internal logic (reuse it as-is), micro_structuring's existing code, blue_team/, frontend/
+
 ```
 CURRENT PHASE: [not started]
 ALLOWED TO TOUCH: [nothing yet — set this before Day 1]
