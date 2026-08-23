@@ -8,7 +8,7 @@ per-customer amount-sampling function directly rather than reimplementing
 spending-pattern logic.
 """
 
-from typing import Dict, List
+from typing import Callable, Dict, List
 
 import numpy as np
 import pandas as pd
@@ -739,3 +739,34 @@ def validate_injected_transactions(df: pd.DataFrame) -> List[InjectedTransaction
     """Bulk Pydantic-boundary validation of injected transaction rows."""
     records = df.drop(columns=["instance_id", "drift_window_days"], errors="ignore").to_dict(orient="records")
     return TypeAdapter(List[InjectedTransaction]).validate_python(records)
+
+
+# --- Day 6.5: generator registry, for arena.py's generic dispatch ----------
+#
+# Keyed by `family` (genome["family"]), not genome_id -- family is the
+# structural identity arena.py's dispatch cares about; genome_id could
+# version independently later without needing a new registry key. All 10
+# generator functions share identical signatures (confirmed during Day 6.5
+# planning), so this registry needs no per-family adapter logic.
+ATTACK_GENERATORS: Dict[str, Dict[str, Callable]] = {
+    "micro_structuring": {
+        "instance_fn": generate_micro_structuring_instance,
+        "attacks_fn": generate_micro_structuring_attacks,
+    },
+    "synthetic_identity_drift": {
+        "instance_fn": generate_identity_drift_instance,
+        "attacks_fn": generate_identity_drift_attacks,
+    },
+    "behavioral_camouflage": {
+        "instance_fn": generate_behavioral_camouflage_instance,
+        "attacks_fn": generate_behavioral_camouflage_attacks,
+    },
+    "social_engineering_coercion": {
+        "instance_fn": generate_social_engineering_instance,
+        "attacks_fn": generate_social_engineering_attacks,
+    },
+    "synthetic_voice_authorization": {
+        "instance_fn": generate_voice_authorization_instance,
+        "attacks_fn": generate_voice_authorization_attacks,
+    },
+}

@@ -43,9 +43,49 @@ numbers):
   and possibly noisy; the per-mutation breakdown is where the real,
   reportable signal is expected to show up (increase_time_spacing moving,
   the other two roughly flat).
+
+CORRECTED CROSS-FAMILY FINDING (Day 6.5, after genericizing dispatch and
+running all 5 families for the first time -- this SUPERSEDES the narrower
+per-family predictions in each family's own docstring in attack_injector.py
+regarding which family should be "more" or "less" detectable by M0):
+
+  Per-family predictions made while building families #2-5 reasoned from
+  individual feature activity ("is_new_device is active, so this family
+  should be more detectable"). That reasoning was incomplete. Measured
+  result (n=500, verification pass): micro_structuring's initial evasion
+  is ~2-4%, while ALL FOUR other families evade 89-98% -- regardless of
+  whether their design touches an "active" feature or not. Diagnosed root
+  cause, confirmed with real data: M0 was trained EXCLUSIVELY on
+  micro_structuring. Its training fraud rows have is_new_device=0.0 for
+  100% of examples (0 out of 4686) -- the tree never saw is_new_device=1
+  associated with fraud, so despite that feature technically being "active"
+  in FEATURE_COLUMNS, M0 never learned to use it that way (median predicted
+  fraud probability on identity_drift's fraud rows: 0.00005). Similarly,
+  voice_authorization's amount_deviation_ratio is even MORE extreme than
+  micro_structuring's training fraud (median ~20 vs ~1.3) -- the feature
+  fires exactly as predicted -- but M0's learned splits apparently require
+  high amount_deviation_ratio to CO-OCCUR with high velocity (as it always
+  does in micro_structuring's dense-burst training data: median count_24h=7
+  there vs. count_24h=0 for a single isolated voice-auth transaction). That
+  joint combination is out-of-distribution relative to training, so M0
+  still misses it (median predicted probability: 0.00012) despite the
+  individual feature being unambiguously elevated.
+
+  Takeaway: feature importance measured in isolation does not predict
+  generalization to a structurally different fraud family. A detector
+  trained on one attack pattern can fail to recognize a genuinely different
+  pattern even when it touches features the model considers "important" --
+  because those features were only ever learned in combination with OTHER
+  properties (like burst velocity) specific to the training family's shape.
+  This is arguably the single most important finding of the whole 5-family
+  build: it is the concrete, measured justification for why Sentinel-X's
+  adversarial loop (and eventually multi-family retraining) matters, rather
+  than a one-time detector being assumed to generalize. See the Day 6.5
+  verification run for exact per-family numbers.
 """
 
-from typing import Dict, List, Optional
+import functools
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -53,7 +93,7 @@ import pandas as pd
 from app.blue_team.detector import FEATURE_COLUMNS, evaluate_detector, train_lightgbm_detector
 from app.blue_team.features import combine_clean_and_injected, engineer_features
 from app.blue_team.graph_engine import apply_graph_features
-from app.red_team.attack_injector import generate_micro_structuring_attacks, generate_micro_structuring_instance
+from app.red_team.attack_injector import ATTACK_GENERATORS
 from app.simulator.clean_generator import sample_transaction_amounts
 from app.core.config import CHANNELS, CHANNEL_PROBS, SIMULATION_DAYS, SIMULATION_START_DATE
 
@@ -63,10 +103,19 @@ from app.core.config import CHANNELS, CHANNEL_PROBS, SIMULATION_DAYS, SIMULATION
 # the same customers by design.
 RETEST_INSTANCE_ID_OFFSET: int = 1_000_000
 
-# Mutation implementation constants -- not in the genome JSON, so documented
-# here explicitly rather than buried as magic numbers.
-TIME_SPACING_MULTIPLIER: float = 2.5  # stretch factor for increase_time_spacing
-N_LEGIT_PURCHASES_TO_ADD: int = 3     # rows added per instance for add_legitimate_micro_purchases
+# Mutation implementation constants -- not in any genome JSON, so documented
+# here explicitly rather than buried as magic numbers. Reasonable defaults,
+# approved as adjustable-later-if-results-look-off (Day 6.5 planning turn).
+TIME_SPACING_MULTIPLIER: float = 2.5        # micro_structuring: increase_time_spacing
+N_LEGIT_PURCHASES_TO_ADD: int = 3           # micro_structuring: add_legitimate_micro_purchases
+DRIFT_VELOCITY_MULTIPLIER: float = 2.0      # identity_drift: reduce_extraction_velocity, extend_drift_window
+CAMOUFLAGE_DENSITY_MULTIPLIER: float = 2.0  # behavioral_camouflage: reduce_burst_density
+CAMOUFLAGE_EXTRA_ROWS: int = 3              # behavioral_camouflage: increase_camouflage_ratio
+AMOUNT_PROFILE_VARIANCE_FACTOR: float = 0.5  # behavioral_camouflage: match_customer_amount_profile
+RISK_SCORE_SCALE_FACTOR: float = 0.5        # social_engineering/voice_authorization: lower/adjust risk score
+
+# field -> customer attribute, for the "customers_own" swap-entity-field pool.
+_OWN_POOL_ATTR: Dict[str, str] = {"device_id": "primary_devices", "beneficiary_id": "usual_beneficiaries"}
 
 
 def _customer_row(customers: pd.DataFrame, customer_id: str) -> pd.Series:
@@ -99,8 +148,10 @@ def run_attack(
 ) -> Dict:
     """Generate a fresh un-mutated attack batch, score it with `model`, and
     return the evasion rate plus the evaded rows (with instance_id intact).
+    Dispatches to the correct family's generator via ATTACK_GENERATORS.
     """
-    attacks_raw = generate_micro_structuring_attacks(genome, customers, merchants, n_instances, seed=seed)
+    attacks_fn = ATTACK_GENERATORS[genome["family"]]["attacks_fn"]
+    attacks_raw = attacks_fn(genome, customers, merchants, n_instances, seed=seed)
     tx_to_instance = attacks_raw.set_index("transaction_id")["instance_id"].to_dict()
 
     featured = embed_and_engineer(attacks_raw, customers, clean_history, merchants)
@@ -131,40 +182,233 @@ def generate_matched_population_attacks(
     seed: int,
     instance_id_offset: int = RETEST_INSTANCE_ID_OFFSET,
 ) -> pd.DataFrame:
-    """One fresh micro_structuring instance per customer in `customer_ids`
-    (a FIXED, caller-provided population -- not a random draw), reusing Day
-    3's per-instance generator (generate_micro_structuring_instance)
-    directly rather than reimplementing it. attack_injector.py's own
-    generate_micro_structuring_attacks always samples customers randomly
-    internally and can't be pointed at a specific population, so this
-    orchestration loop (matching its logic exactly, just over a fixed
-    customer list) lives here in arena.py instead -- attack_injector.py is
-    not in Day 5's ALLOWED_TO_TOUCH.
+    """One fresh instance per customer in `customer_ids` (a FIXED,
+    caller-provided population -- not a random draw), reusing the family's
+    own per-instance generator (via ATTACK_GENERATORS) directly rather than
+    reimplementing it. Each family's own `generate_<family>_attacks`
+    always samples customers randomly internally and can't be pointed at a
+    specific population, so this orchestration loop (matching that logic's
+    timing-placement approach, just over a fixed customer list) lives here
+    in arena.py instead -- attack_injector.py's individual family functions
+    are not touched.
+
+    Timing placement mirrors each family's own convention: identity_drift
+    anchors to a drift-window offset from SIMULATION_START_DATE (matching
+    its own generate_identity_drift_attacks); every other family places the
+    instance at a random offset across the full 30-day simulation.
 
     instance_id is offset well clear of any n_instances range used for the
     initial attack batch, so transaction_id strings can never collide
     between the two batches even though they now share customers.
     """
     np.random.seed(seed)
-    window_days = genome["parameters"]["time_window_hours"] / 24.0
-    max_start_offset_days = max(SIMULATION_DAYS - window_days, 0.0)
+    family = genome["family"]
+    instance_fn = ATTACK_GENERATORS[family]["instance_fn"]
     n_instances = len(customer_ids)
-    start_offsets = np.random.uniform(0, max_start_offset_days, size=n_instances)
     base = pd.Timestamp(SIMULATION_START_DATE)
-    customers_indexed = customers.set_index("customer_id")
 
+    if family == "synthetic_identity_drift":
+        offsets_days = np.random.uniform(
+            genome["parameters"]["drift_window_days_range"][0],
+            genome["parameters"]["drift_window_days_range"][1],
+            size=n_instances,
+        )
+    elif "time_window_hours" in genome["parameters"] or "burst_window_hours" in genome["parameters"]:
+        window_hours = genome["parameters"].get("time_window_hours", genome["parameters"].get("burst_window_hours"))
+        max_start_offset_days = max(SIMULATION_DAYS - window_hours / 24.0, 0.0)
+        offsets_days = np.random.uniform(0, max_start_offset_days, size=n_instances)
+    else:
+        # Single-transaction families (social_engineering_coercion,
+        # synthetic_voice_authorization): no window to fit, place anywhere.
+        offsets_days = np.random.uniform(0, SIMULATION_DAYS, size=n_instances)
+
+    customers_indexed = customers.set_index("customer_id")
     instances = []
-    for i, (customer_id, offset) in enumerate(zip(customer_ids, start_offsets)):
+    for i, (customer_id, offset) in enumerate(zip(customer_ids, offsets_days)):
         customer = customers_indexed.loc[customer_id].copy()
         customer["customer_id"] = customer_id  # restore -- dropped by set_index
         start_time = base + pd.to_timedelta(offset, unit="D")
         instance_id = instance_id_offset + i
-        instance_df = generate_micro_structuring_instance(
+        instance_df = instance_fn(
             genome, customer, merchants, instance_id=instance_id, start_time=start_time, seed=seed + i + 1
         )
+        instance_df["instance_id"] = instance_id  # idempotent for families that already set it internally
         instances.append(instance_df)
 
     return pd.concat(instances, ignore_index=True)
+
+
+# --- Day 6.5: generic mutation transforms + per-(family, mutation) registry
+#
+# Every mutation across all 5 families collapses into one of 6 reusable
+# shapes. Adding a 6th family later means one registry line reusing an
+# existing generic, or one new generic if truly novel -- not a growing
+# if/elif chain.
+
+
+def _stretch_timing(rows, sibling_rows, customer, merchants, rng, multiplier):
+    """Scale each row's offset from the instance's start time by
+    `multiplier` -- a positive linear scaling, so relative order among the
+    instance's own rows is preserved by construction.
+    """
+    mutated = rows.copy()
+    instance_start = sibling_rows["timestamp"].min()
+    offset = mutated["timestamp"] - instance_start
+    mutated["timestamp"] = instance_start + offset * multiplier
+    return mutated
+
+
+def _swap_entity_field(rows, sibling_rows, customer, merchants, rng, field, pool):
+    """Replace `field` (device_id or beneficiary_id) via a pool strategy:
+    - "recycled_pool": remap this instance's distinct original values to a
+      shared "recycled" replacement pool (consistent mapping across rows).
+    - "customers_own": draw from the customer's own known entities for that
+      field (the opposite direction of recycled_pool -- de-novelizes it).
+    - "brand_new": a never-before-seen synthetic id, unique per row.
+    """
+    mutated = rows.copy()
+    if pool == "recycled_pool":
+        original_values = sibling_rows[field].unique()
+        recycled = np.array([f"MUTATED-RECYCLED-{field.upper()}-{i}" for i in range(len(original_values))])
+        mapping = dict(zip(original_values, recycled))
+        mutated[field] = mutated[field].map(mapping)
+    elif pool == "customers_own":
+        own_pool = np.array(customer[_OWN_POOL_ATTR[field]])
+        mutated[field] = rng.choice(own_pool, size=len(mutated))
+    elif pool == "brand_new":
+        mutated[field] = [f"MUTATED-{field.upper()}-{tx}" for tx in mutated["transaction_id"]]
+    else:
+        raise ValueError(f"unknown swap-entity-field pool strategy: {pool}")
+    return mutated
+
+
+def _add_extra_rows(rows, sibling_rows, customer, merchants, rng, n_new):
+    """The given row(s) are left untouched; n_new new legitimate-looking
+    rows (customer's own normal spending pattern, reusing clean_generator's
+    amount sampler) are added as camouflage near them.
+    """
+    anchor_time = rows["timestamp"].iloc[0]
+    anchor_tx_id = rows["transaction_id"].iloc[0]
+    offsets_hours = rng.uniform(-2, 2, size=n_new)
+    new_timestamps = anchor_time + pd.to_timedelta(offsets_hours, unit="h")
+
+    mean_spend = np.full(n_new, customer["mean_spend"])
+    spend_variance = np.full(n_new, customer["spend_variance"])
+    amounts = sample_transaction_amounts(mean_spend, spend_variance, seed=int(rng.integers(0, 1_000_000)))
+
+    usual_merchants = np.array(customer["usual_merchants"])
+    merchant_id = rng.choice(usual_merchants, size=n_new)
+    merchant_category_map = merchants.set_index("merchant_id")["merchant_category"]
+    merchant_category = merchant_category_map.reindex(merchant_id).to_numpy()
+
+    primary_devices = np.array(customer["primary_devices"])
+    device_id = rng.choice(primary_devices, size=n_new)
+    usual_beneficiaries = np.array(customer["usual_beneficiaries"])
+    beneficiary_id = rng.choice(usual_beneficiaries, size=n_new)
+    channel = rng.choice(CHANNELS, size=n_new, p=CHANNEL_PROBS)
+
+    new_rows = pd.DataFrame(
+        {
+            "transaction_id": [f"{anchor_tx_id}-LEGIT{i}" for i in range(n_new)],
+            "timestamp": new_timestamps,
+            "customer_id": customer["customer_id"],
+            "merchant_id": merchant_id,
+            "beneficiary_id": beneficiary_id,
+            "amount": amounts,
+            "currency": "INR",
+            "channel": channel,
+            "device_id": device_id,
+            "ip_region": customer["base_location"],
+            "location": customer["base_location"],
+            "merchant_category": merchant_category,
+            "semantic_risk_score": 0.0,
+            "voice_confidence_score": 1.0,
+            "is_fraud": 0,
+            "attack_family": None,
+            "genome_id": None,
+        }
+    )
+    return pd.concat([rows.copy(), new_rows], ignore_index=True)
+
+
+def _scale_risk_field(rows, sibling_rows, customer, merchants, rng, field, factor):
+    """Multiply a risk float field (semantic_risk_score) by `factor`."""
+    mutated = rows.copy()
+    mutated[field] = mutated[field] * factor
+    return mutated
+
+
+def _narrow_amount(rows, sibling_rows, customer, merchants, rng, variance_factor):
+    """Re-draw amount from a TIGHTER slice of the customer's own
+    distribution (spend_variance scaled down by variance_factor) -- makes
+    an already-camouflaged amount even closer to the customer's typical
+    spend.
+    """
+    mutated = rows.copy()
+    n = len(mutated)
+    mean_spend = np.full(n, customer["mean_spend"])
+    spend_variance = np.full(n, customer["spend_variance"] * variance_factor)
+    mutated["amount"] = sample_transaction_amounts(mean_spend, spend_variance, seed=int(rng.integers(0, 1_000_000)))
+    return mutated
+
+
+def _no_op(rows, sibling_rows, customer, merchants, rng):
+    """Some mutations (vary_coercion_pretext, vary_impersonated_role) have
+    no corresponding schema field -- there is genuinely nothing to change
+    in the row. Returning it unchanged is the honest implementation, not a
+    missing feature.
+    """
+    return rows.copy()
+
+
+# (family, mutation_name) -> handler. 15 entries: 5 families x 3 mutations
+# each (combine_with_new_device is shared by 2 families but needs 2 keys).
+#
+# KNOWN LIMITATION (candidate for the docx's limitations/future-work
+# section): synthetic_identity_drift's extend_drift_window conceptually
+# means "lengthen the ~20-day trust-building period," which is a genome
+# PARAMETER (drift_window_days_range) applied before generation, not a
+# property of already-generated rows -- unlike every other mutation here.
+# apply_mutation's interface (rows, sibling_rows, customer, merchants, rng)
+# has no way to re-invoke generate_identity_drift_instance with a different
+# genome. Approximated here as a timing shift (_stretch_timing, same as
+# reduce_extraction_velocity) per the approved Option (a). A proper
+# implementation would need apply_mutation to access and re-invoke the
+# genome generator directly, which was judged out of scope for this pass.
+MUTATION_REGISTRY: Dict[Tuple[str, str], Callable] = {
+    ("micro_structuring", "increase_time_spacing"):
+        functools.partial(_stretch_timing, multiplier=TIME_SPACING_MULTIPLIER),
+    ("micro_structuring", "rotate_mule_accounts"):
+        functools.partial(_swap_entity_field, field="beneficiary_id", pool="recycled_pool"),
+    ("micro_structuring", "add_legitimate_micro_purchases"):
+        functools.partial(_add_extra_rows, n_new=N_LEGIT_PURCHASES_TO_ADD),
+
+    ("synthetic_identity_drift", "extend_drift_window"):
+        functools.partial(_stretch_timing, multiplier=DRIFT_VELOCITY_MULTIPLIER),  # approximation, see above
+    ("synthetic_identity_drift", "reduce_extraction_velocity"):
+        functools.partial(_stretch_timing, multiplier=DRIFT_VELOCITY_MULTIPLIER),
+    ("synthetic_identity_drift", "reuse_known_device"):
+        functools.partial(_swap_entity_field, field="device_id", pool="customers_own"),
+
+    ("behavioral_camouflage", "reduce_burst_density"):
+        functools.partial(_stretch_timing, multiplier=CAMOUFLAGE_DENSITY_MULTIPLIER),
+    ("behavioral_camouflage", "increase_camouflage_ratio"):
+        functools.partial(_add_extra_rows, n_new=CAMOUFLAGE_EXTRA_ROWS),
+    ("behavioral_camouflage", "match_customer_amount_profile"):
+        functools.partial(_narrow_amount, variance_factor=AMOUNT_PROFILE_VARIANCE_FACTOR),
+
+    ("social_engineering_coercion", "lower_semantic_risk_score"):
+        functools.partial(_scale_risk_field, field="semantic_risk_score", factor=RISK_SCORE_SCALE_FACTOR),
+    ("social_engineering_coercion", "vary_coercion_pretext"): _no_op,
+    ("social_engineering_coercion", "combine_with_new_device"):
+        functools.partial(_swap_entity_field, field="device_id", pool="brand_new"),
+
+    ("synthetic_voice_authorization", "vary_impersonated_role"): _no_op,
+    ("synthetic_voice_authorization", "adjust_urgency_score"):
+        functools.partial(_scale_risk_field, field="semantic_risk_score", factor=RISK_SCORE_SCALE_FACTOR),
+    ("synthetic_voice_authorization", "combine_with_new_device"):
+        functools.partial(_swap_entity_field, field="device_id", pool="brand_new"),
+}
 
 
 def apply_mutation(
@@ -172,84 +416,19 @@ def apply_mutation(
     sibling_rows: pd.DataFrame,
     customer: pd.Series,
     merchants: pd.DataFrame,
+    family: str,
     mutation_name: str,
     rng: np.random.Generator,
 ) -> pd.DataFrame:
-    """Apply one mutation, consistently, to every evaded row of one instance.
-
-    - increase_time_spacing: stretch each row's offset from the instance's
-      start time by TIME_SPACING_MULTIPLIER (a positive linear scaling of
-      offsets, so relative order among the instance's own rows is preserved
-      by construction).
-    - rotate_mule_accounts: remap this instance's mule beneficiary ids to a
-      shared "recycled" pool instead of always-fresh per-instance ids
-      (consistent mapping across all of this instance's evaded rows).
-    - add_legitimate_micro_purchases: the evaded row(s) themselves are left
-      untouched; new legitimate-looking rows (customer's own normal
-      spending pattern, reusing clean_generator's amount sampler) are added
-      as camouflage near them.
+    """Dispatch to the registered handler for (family, mutation_name),
+    applied consistently to every given row of one instance. Replaces the
+    old hardcoded if/elif chain that only understood micro_structuring's
+    three mutation names.
     """
-    mutated = evaded_group.copy()
-    instance_start = sibling_rows["timestamp"].min()
-
-    if mutation_name == "increase_time_spacing":
-        offset = mutated["timestamp"] - instance_start
-        mutated["timestamp"] = instance_start + offset * TIME_SPACING_MULTIPLIER
-        return mutated
-
-    if mutation_name == "rotate_mule_accounts":
-        original_mules = sibling_rows["beneficiary_id"].unique()
-        recycled = np.array([f"MULE-RECYCLED-{i}" for i in range(len(original_mules))])
-        mapping = dict(zip(original_mules, recycled))
-        mutated["beneficiary_id"] = mutated["beneficiary_id"].map(mapping)
-        return mutated
-
-    if mutation_name == "add_legitimate_micro_purchases":
-        n_new = N_LEGIT_PURCHASES_TO_ADD
-        offsets_hours = rng.uniform(-2, 2, size=n_new)
-        anchor_time = mutated["timestamp"].iloc[0]
-        new_timestamps = anchor_time + pd.to_timedelta(offsets_hours, unit="h")
-
-        mean_spend = np.full(n_new, customer["mean_spend"])
-        spend_variance = np.full(n_new, customer["spend_variance"])
-        amounts = sample_transaction_amounts(mean_spend, spend_variance, seed=int(rng.integers(0, 1_000_000)))
-
-        usual_merchants = np.array(customer["usual_merchants"])
-        merchant_id = rng.choice(usual_merchants, size=n_new)
-        merchant_category_map = merchants.set_index("merchant_id")["merchant_category"]
-        merchant_category = merchant_category_map.reindex(merchant_id).to_numpy()
-
-        primary_devices = np.array(customer["primary_devices"])
-        device_id = rng.choice(primary_devices, size=n_new)
-        usual_beneficiaries = np.array(customer["usual_beneficiaries"])
-        beneficiary_id = rng.choice(usual_beneficiaries, size=n_new)
-        channel = rng.choice(CHANNELS, size=n_new, p=CHANNEL_PROBS)
-
-        anchor_tx_id = mutated["transaction_id"].iloc[0]
-        new_rows = pd.DataFrame(
-            {
-                "transaction_id": [f"{anchor_tx_id}-LEGIT{i}" for i in range(n_new)],
-                "timestamp": new_timestamps,
-                "customer_id": customer["customer_id"],
-                "merchant_id": merchant_id,
-                "beneficiary_id": beneficiary_id,
-                "amount": amounts,
-                "currency": "INR",
-                "channel": channel,
-                "device_id": device_id,
-                "ip_region": customer["base_location"],
-                "location": customer["base_location"],
-                "merchant_category": merchant_category,
-                "semantic_risk_score": 0.0,
-                "voice_confidence_score": 1.0,
-                "is_fraud": 0,
-                "attack_family": None,
-                "genome_id": None,
-            }
-        )
-        return pd.concat([mutated, new_rows], ignore_index=True)
-
-    raise ValueError(f"unknown mutation: {mutation_name}")
+    handler = MUTATION_REGISTRY.get((family, mutation_name))
+    if handler is None:
+        raise ValueError(f"no mutation handler registered for (family={family!r}, mutation={mutation_name!r})")
+    return handler(evaded_group, sibling_rows, customer, merchants, rng)
 
 
 def validate_mutation(
@@ -314,7 +493,7 @@ def harvest_hard_negatives(
         instance_end = sibling_rows["timestamp"].max()
         cust_clean = clean_history[clean_history["customer_id"] == customer_id]
 
-        mutated_instance_df = apply_mutation(group, sibling_rows, customer, merchants, mutation_name, rng)
+        mutated_instance_df = apply_mutation(group, sibling_rows, customer, merchants, genome["family"], mutation_name, rng)
         unchanged_siblings = sibling_rows[~sibling_rows["transaction_id"].isin(group["transaction_id"])]
         full_instance_df = pd.concat([unchanged_siblings, mutated_instance_df], ignore_index=True)
 
@@ -422,7 +601,7 @@ def re_test(
         fraud_group = group[group["is_fraud"] == 1]
         chosen_mutation = mutation_name or rng.choice(genome["mutations"])
         customer = _customer_row(customers, fraud_group["customer_id"].iloc[0])
-        mutated_fraud = apply_mutation(fraud_group, group, customer, merchants, chosen_mutation, rng)
+        mutated_fraud = apply_mutation(fraud_group, group, customer, merchants, genome["family"], chosen_mutation, rng)
         unchanged = group[~group["transaction_id"].isin(fraud_group["transaction_id"])]
         mutated_frames.append(pd.concat([unchanged, mutated_fraud], ignore_index=True))
 
@@ -547,4 +726,32 @@ def run_arena_mvp_gate(
                 official_final["transaction_ids_used"].isdisjoint(retraining_transaction_ids)
             ),
         },
+    }
+
+
+def run_arena_for_all_families(
+    genomes: List[Dict],
+    model,
+    train_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    customers: pd.DataFrame,
+    clean_history: pd.DataFrame,
+    merchants: pd.DataFrame,
+    graph_features: Dict,
+    feature_columns: List[str] = FEATURE_COLUMNS,
+    n_instances: int = 2000,
+    seed: int = 42,
+) -> Dict[str, Dict]:
+    """Run the full MVP-gate loop independently for each genome, keyed by
+    family. For Day 7's Command Center dashboard, which needs a per-family
+    ARG/evasion summary. Each family gets its own M1 (retrained from the
+    SAME M0/train_df, independently) -- families are not combined into one
+    retraining pass.
+    """
+    return {
+        genome["family"]: run_arena_mvp_gate(
+            genome, model, train_df, test_df, customers, clean_history, merchants, graph_features,
+            feature_columns=feature_columns, n_instances=n_instances, seed=seed,
+        )
+        for genome in genomes
     }

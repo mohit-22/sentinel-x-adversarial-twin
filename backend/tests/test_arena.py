@@ -7,10 +7,24 @@ import pytest
 from app.core.config import N_CUSTOMERS, N_MERCHANTS, N_TRANSACTIONS, SEED, SIMULATION_DAYS
 from app.blue_team.detector import FEATURE_COLUMNS, run_blue_team_pipeline
 from app.blue_team.features import combine_clean_and_injected, engineer_features
-from app.red_team.arena import compute_arg, run_arena_mvp_gate, validate_mutation
-from app.red_team.attack_genomes import MICRO_STRUCTURING_GENOME
-from app.red_team.attack_injector import generate_micro_structuring_attacks
+from app.red_team.arena import MUTATION_REGISTRY, apply_mutation, compute_arg, run_arena_mvp_gate, validate_mutation
+from app.red_team.attack_genomes import (
+    BEHAVIORAL_CAMOUFLAGE_GENOME,
+    MICRO_STRUCTURING_GENOME,
+    SOCIAL_ENGINEERING_COERCION_GENOME,
+    SYNTHETIC_IDENTITY_DRIFT_GENOME,
+    SYNTHETIC_VOICE_AUTHORIZATION_GENOME,
+)
+from app.red_team.attack_injector import ATTACK_GENERATORS, generate_micro_structuring_attacks
 from app.simulator.clean_generator import generate_customer_profiles, generate_merchants, generate_transaction_base
+
+ALL_GENOMES = [
+    MICRO_STRUCTURING_GENOME,
+    SYNTHETIC_IDENTITY_DRIFT_GENOME,
+    BEHAVIORAL_CAMOUFLAGE_GENOME,
+    SOCIAL_ENGINEERING_COERCION_GENOME,
+    SYNTHETIC_VOICE_AUTHORIZATION_GENOME,
+]
 
 
 def _base_customer():
@@ -19,10 +33,32 @@ def _base_customer():
             "customer_id": "CUST-000000",
             "mean_spend": 1000.0,
             "spend_variance": 100.0,
+            "base_location": "Erode",
             "primary_devices": ["DEV-000000-0", "DEV-000000-1"],
             "usual_beneficiaries": ["CUST-000005", "CUST-000010"],
+            "usual_merchants": ["MERCH-0001", "MERCH-0002"],
         }
     )
+
+
+def _base_merchants():
+    return pd.DataFrame(
+        {"merchant_id": ["MERCH-0001", "MERCH-0002"], "merchant_category": ["grocery", "dining"]}
+    )
+
+
+def _base_rows(**overrides):
+    row = {
+        "transaction_id": ["TX-0000-F00"],
+        "timestamp": [pd.Timestamp("2026-01-10 12:00:00")],
+        "customer_id": ["CUST-000000"],
+        "amount": [3000.0],
+        "device_id": ["DRIFT-DEV-0000-0"],
+        "beneficiary_id": ["MULE-0000-0"],
+        "semantic_risk_score": [0.85],
+    }
+    row.update(overrides)
+    return pd.DataFrame(row)
 
 
 def _base_mutated_row(**overrides):
@@ -93,6 +129,127 @@ def test_validate_mutation_novelty_flag_consistency_success():
     mutated_row = _base_mutated_row(device_id="DEV-999999-0", is_new_device=1)
     result = validate_mutation(mutated_row, mutated_row, customer, None, None)
     assert result["novelty_ok"] is True
+
+
+# ============================================================================
+# Day 6.5: generator registry + generic mutation dispatch
+# ============================================================================
+
+
+def test_attack_generators_registry_covers_all_five_families():
+    for genome in ALL_GENOMES:
+        family = genome["family"]
+        assert family in ATTACK_GENERATORS, f"{family} missing from ATTACK_GENERATORS"
+        assert callable(ATTACK_GENERATORS[family]["instance_fn"])
+        assert callable(ATTACK_GENERATORS[family]["attacks_fn"])
+
+
+def test_mutation_registry_covers_every_genome_mutation_no_missing_entries():
+    """Completeness check: every mutation string in every genome's
+    "mutations" list has a corresponding registry entry.
+    """
+    missing = []
+    total_pairs = 0
+    for genome in ALL_GENOMES:
+        for mutation_name in genome["mutations"]:
+            total_pairs += 1
+            if (genome["family"], mutation_name) not in MUTATION_REGISTRY:
+                missing.append((genome["family"], mutation_name))
+    assert missing == []
+    assert total_pairs == 15  # 5 families x 3 mutations each
+    assert len(MUTATION_REGISTRY) == 15
+
+
+def test_apply_mutation_unknown_pair_raises():
+    customer = _base_customer()
+    merchants = _base_merchants()
+    rows = _base_rows()
+    with pytest.raises(ValueError):
+        apply_mutation(rows, rows, customer, merchants, "not_a_real_family", "not_a_real_mutation", np.random.default_rng(0))
+
+
+def test_stretch_timing_generic_via_increase_time_spacing():
+    customer = _base_customer()
+    merchants = _base_merchants()
+    sibling_rows = _base_rows(timestamp=[pd.Timestamp("2026-01-10 10:00:00")])  # instance start
+    rows = _base_rows(timestamp=[pd.Timestamp("2026-01-10 12:00:00")])  # 2h offset from start
+
+    mutated = apply_mutation(rows, sibling_rows, customer, merchants, "micro_structuring", "increase_time_spacing", np.random.default_rng(0))
+    expected_offset_hours = 2.0 * 2.5  # TIME_SPACING_MULTIPLIER
+    actual_offset_hours = (mutated["timestamp"].iloc[0] - sibling_rows["timestamp"].iloc[0]).total_seconds() / 3600
+    assert actual_offset_hours == pytest.approx(expected_offset_hours)
+
+
+def test_swap_entity_field_recycled_pool_via_rotate_mule_accounts():
+    customer = _base_customer()
+    merchants = _base_merchants()
+    sibling_rows = _base_rows(beneficiary_id=["MULE-0000-0"])
+    rows = _base_rows(beneficiary_id=["MULE-0000-0"])
+
+    mutated = apply_mutation(rows, sibling_rows, customer, merchants, "micro_structuring", "rotate_mule_accounts", np.random.default_rng(0))
+    assert mutated["beneficiary_id"].iloc[0].startswith("MUTATED-RECYCLED-BENEFICIARY_ID-")
+    assert mutated["beneficiary_id"].iloc[0] != "MULE-0000-0"
+
+
+def test_swap_entity_field_customers_own_via_reuse_known_device():
+    customer = _base_customer()
+    merchants = _base_merchants()
+    rows = _base_rows(device_id=["DRIFT-DEV-0000-0"])
+
+    mutated = apply_mutation(rows, rows, customer, merchants, "synthetic_identity_drift", "reuse_known_device", np.random.default_rng(0))
+    assert mutated["device_id"].iloc[0] in customer["primary_devices"]
+
+
+def test_swap_entity_field_brand_new_via_combine_with_new_device():
+    customer = _base_customer()
+    merchants = _base_merchants()
+    rows = _base_rows(device_id=["DEV-000000-0"])  # base genome uses customer's own device
+
+    mutated = apply_mutation(rows, rows, customer, merchants, "social_engineering_coercion", "combine_with_new_device", np.random.default_rng(0))
+    assert mutated["device_id"].iloc[0].startswith("MUTATED-DEVICE_ID-")
+    assert mutated["device_id"].iloc[0] not in customer["primary_devices"]
+
+
+def test_add_extra_rows_generic_via_add_legitimate_micro_purchases():
+    customer = _base_customer()
+    merchants = _base_merchants()
+    rows = _base_rows()
+
+    mutated = apply_mutation(rows, rows, customer, merchants, "micro_structuring", "add_legitimate_micro_purchases", np.random.default_rng(0))
+    assert len(mutated) == 1 + 3  # original row untouched + N_LEGIT_PURCHASES_TO_ADD
+    # the original fraud row must be present unchanged
+    assert rows.iloc[0]["transaction_id"] in mutated["transaction_id"].values
+    new_rows = mutated[mutated["transaction_id"] != rows.iloc[0]["transaction_id"]]
+    assert (new_rows["is_fraud"] == 0).all()
+
+
+def test_scale_risk_field_generic_via_lower_semantic_risk_score():
+    customer = _base_customer()
+    merchants = _base_merchants()
+    rows = _base_rows(semantic_risk_score=[0.9])
+
+    mutated = apply_mutation(rows, rows, customer, merchants, "social_engineering_coercion", "lower_semantic_risk_score", np.random.default_rng(0))
+    assert mutated["semantic_risk_score"].iloc[0] == pytest.approx(0.9 * 0.5)
+
+
+def test_narrow_amount_generic_via_match_customer_amount_profile():
+    customer = _base_customer()
+    merchants = _base_merchants()
+    rows = _base_rows(amount=[5000.0])
+
+    mutated = apply_mutation(rows, rows, customer, merchants, "behavioral_camouflage", "match_customer_amount_profile", np.random.default_rng(0))
+    assert len(mutated) == 1
+    assert mutated["amount"].iloc[0] > 0
+    assert mutated["amount"].iloc[0] != 5000.0  # re-drawn, not left unchanged
+
+
+def test_no_op_generic_via_vary_coercion_pretext():
+    customer = _base_customer()
+    merchants = _base_merchants()
+    rows = _base_rows(semantic_risk_score=[0.9])
+
+    mutated = apply_mutation(rows, rows, customer, merchants, "social_engineering_coercion", "vary_coercion_pretext", np.random.default_rng(0))
+    pd.testing.assert_frame_equal(mutated.reset_index(drop=True), rows.reset_index(drop=True))
 
 
 def test_compute_arg_matches_exact_formula():

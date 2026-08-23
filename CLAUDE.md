@@ -114,6 +114,11 @@ CURRENT PHASE: Day 6 — attack family #5 (Synthetic Voice/Video Authorization F
 ALLOWED TO TOUCH: backend/app/red_team/attack_genomes.py (add genome #5, do not touch #1-4), backend/app/red_team/attack_injector.py, backend/app/core/schemas.py (add voice_confidence_score field per addendum), backend/tests/test_red_team.py
 NOT ALLOWED TO TOUCH: arena.py, existing families' code, blue_team/, frontend/
 
+
+CURRENT PHASE: Day 6.5 — Genericize arena.py across all 5 attack families
+ALLOWED TO TOUCH: backend/app/red_team/arena.py, backend/app/red_team/attack_injector.py (only if a shared dispatcher/registry needs adding there), backend/tests/test_arena.py
+NOT ALLOWED TO TOUCH: attack_genomes.py (genomes are final, don't edit), families' individual generator functions (reuse them, don't rewrite them), blue_team/, frontend/
+
 ```
 CURRENT PHASE: [not started]
 ALLOWED TO TOUCH: [nothing yet — set this before Day 1]
