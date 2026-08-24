@@ -23,6 +23,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.blue_team.detector import FEATURE_COLUMNS, evaluate_detector, run_blue_team_pipeline
+from app.blue_team.explainability import compute_reason_codes, find_cached_feature_row
 from app.blue_team.features import combine_clean_and_injected, engineer_features
 from app.blue_team.graph_engine import apply_graph_features
 from app.core.config import N_CUSTOMERS, N_MERCHANTS, N_TRANSACTIONS, SEED, SIMULATION_DAYS
@@ -286,17 +287,36 @@ def arena_run(request: ArenaRunRequest) -> ArenaRunSummary:
 # --- 4. GET /explain/{transaction_id} -- Day 8 -------------------------------
 
 
-@router.get("/explain/{transaction_id}")
-def explain(transaction_id: str):
-    """SHAP TreeExplainer reason codes -- implemented in Day 8.
+class ExplainResponse(BaseModel):
+    transaction_id: str
+    reason_codes: List[Dict[str, str]]
 
-    Not built today: no SHAP wiring exists anywhere in blue_team/ yet.
-    Returns a clean 501, not fake reason codes.
+
+@router.get("/explain/{transaction_id}", response_model=ExplainResponse)
+def explain(transaction_id: str) -> ExplainResponse:
+    """SHAP TreeExplainer top-3 reason codes (Day 8a, PRD §7.3 exact shape).
+
+    Honest scope: only transactions already present in the startup
+    pipeline's cached train_df/test_df can be explained -- SHAP needs the
+    exact engineered feature row, which cannot be recomputed from a bare
+    id (feature engineering is context-dependent). A transaction_id not
+    found there (e.g. a freshly-generated /payment-twin counterfactual
+    instance) gets an honest 404, not a fake explanation -- a disclosed
+    scope boundary (PRD_SENTINEL_X §13.1), not an error.
     """
-    raise HTTPException(
-        status_code=501,
-        detail="explain endpoint not implemented yet -- SHAP explainability is Day 8 work",
-    )
+    state = _get_state()
+    row = find_cached_feature_row(transaction_id, state["train_df"], state["test_df"])
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"no cached feature vector for transaction_id {transaction_id!r} -- "
+                "SHAP explainability today covers M0's original train/test dataset only, "
+                "not transactions generated fresh for other views (e.g. /payment-twin)"
+            ),
+        )
+    reason_codes = compute_reason_codes(row, state["model"])
+    return ExplainResponse(transaction_id=transaction_id, reason_codes=reason_codes)
 
 
 # --- 5. GET /metrics ----------------------------------------------------------

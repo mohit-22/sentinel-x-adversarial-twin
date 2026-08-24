@@ -9,3 +9,4 @@ scikit-learn
 networkx
 fastapi
 uvicorn
+shap

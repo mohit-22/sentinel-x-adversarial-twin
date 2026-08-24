@@ -516,6 +516,21 @@ list; each entry names the actual approved scope decision.
   CDP-driven verification; worked around on the frontend with a composite
   `customer_id + transaction_id` key. The underlying id-generation behavior
   itself was left untouched (out of that session's frontend-only scope).
+- **`/explain/{transaction_id}` SHAP coverage (Day 8a planning):** SHAP needs
+  the exact engineered feature row that was fed to the model, and feature
+  engineering is context-dependent, so it cannot be recomputed from a bare
+  transaction_id. `/explain` only covers transactions already present in the
+  startup pipeline's cached `train_df`/`test_df` (M0's original 50k-row
+  dataset + the 500 startup attack instances) — a transaction generated
+  fresh for another view (e.g. `/payment-twin`'s counterfactual instances)
+  gets an honest 404, not a fake explanation. This directly affects Screen
+  4's Blue Team SOC feed: its high-risk BLOCK rows are disproportionately
+  the freshly-generated injected fraud legs, so those specific rows are the
+  ones most likely to 404 when clicked — flagged explicitly since it's the
+  row type a judge is most likely to click. `ShapModal.tsx` frames this 404
+  as a stated scope boundary, not an error. Extending coverage (e.g. caching
+  feature rows in `/detect`) was considered and left as a candidate for a
+  future scoped session, not built today.
 
 ---
 

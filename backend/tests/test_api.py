@@ -179,10 +179,14 @@ def test_metrics_latest_arena_run_populates_after_arena_run(client):
     assert latest["initial_evasion_rate"] == arena_body["initial_evasion_rate"]
 
 
-def test_explain_returns_501_not_a_crash(client):
+def test_explain_unknown_transaction_id_returns_404_not_a_crash(client):
+    """Day 8a: /explain is real now (SHAP on the cached train/test set).
+    TEST-TXN-0001 was never part of that cached dataset, so this is the
+    honest "not in today's SHAP scope" 404, not the old blanket 501.
+    """
     response = client.get("/api/v1/explain/TEST-TXN-0001")
-    assert response.status_code == 501
-    assert "Day 8" in response.json()["detail"]
+    assert response.status_code == 404
+    assert "TEST-TXN-0001" in response.json()["detail"]
 
 
 def test_sandbox_compile_returns_501_not_a_crash(client):

@@ -72,6 +72,19 @@ doesn't specify it, ask.
 > anti-drift mechanism in this file — it tells Claude Code exactly what is
 > and isn't in scope *right now*, regardless of what looks tempting to build.
 
+```
+CURRENT PHASE: [not started]
+ALLOWED TO TOUCH: [nothing yet — set this before Day 1]
+NOT ALLOWED TO TOUCH: [everything else]
+```
+
+Example of how this should look mid-build:
+```
+CURRENT PHASE: Day 5 — Adversarial Arena (MVP gate)
+ALLOWED TO TOUCH: backend/app/red_team/arena.py, backend/tests/test_arena.py
+NOT ALLOWED TO TOUCH: frontend/, remaining attack families, API layer
+```
+
 
 CURRENT PHASE: Day 1-2 — Synthetic payment world
 ALLOWED TO TOUCH: backend/app/simulator/, backend/app/core/schemas.py, backend/app/core/config.py, backend/tests/test_simulator.py
@@ -176,18 +189,12 @@ ALLOWED TO TOUCH: frontend/src/app/arena/ (or equivalent route), frontend/src/co
 NOT ALLOWED TO TOUCH: Screens 1/2/3/4's existing files, backend/
 
 
-```
-CURRENT PHASE: [not started]
-ALLOWED TO TOUCH: [nothing yet — set this before Day 1]
-NOT ALLOWED TO TOUCH: [everything else]
-```
+CURRENT PHASE: Day 8a — SHAP explainability
+ALLOWED TO TOUCH: backend/app/blue_team/explainability.py, backend/app/api/endpoints.py (only the /explain route — replace the 501 with real SHAP logic), backend/tests/test_blue_team.py or a new test_explainability.py, frontend/src/components/ShapModal.tsx (update to consume real data instead of the 501 state)
+NOT ALLOWED TO TOUCH: any other frontend screen, detector.py's training logic (reuse the trained model, don't retrain), red_team/
 
-Example of how this should look mid-build:
-```
-CURRENT PHASE: Day 5 — Adversarial Arena (MVP gate)
-ALLOWED TO TOUCH: backend/app/red_team/arena.py, backend/tests/test_arena.py
-NOT ALLOWED TO TOUCH: frontend/, remaining attack families, API layer
-```
+
+
 
 ---
 
