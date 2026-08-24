@@ -489,6 +489,34 @@ scale." Name these techniques correctly; do not claim any of them were built:
   (conceptually similar to RBI Innovation Hub's DPIP initiative), rather than
   relying on single-institution data in isolation.
 
+### 13.1 Known implementation approximations (disclose in docx limitations)
+
+Running list of build-time approximations/known gaps surfaced during
+implementation — each already flagged and approved in-session at the time,
+tracked here so they land in the docx's limitations/future-work section
+rather than being forgotten by submission time. Not fixed as part of this
+list; each entry names the actual approved scope decision.
+
+- **`extend_drift_window` mutation (Day 6.5, `arena.py` `MUTATION_REGISTRY`):**
+  `synthetic_identity_drift`'s `extend_drift_window` mutation conceptually
+  needs to regenerate the attack instance with a longer `drift_window_days`
+  (a genome-parameter change), not transform existing rows. Approximated as
+  a post-hoc timing shift via the generic `_stretch_timing` transform
+  (approved Option (a) at the time) rather than proper regeneration, which
+  would require `apply_mutation` to re-invoke the instance generator with a
+  modified genome. Documented in code as a known limitation at the point of
+  implementation.
+- **`/payment-twin/{customer_id}` counterfactual `transaction_id` uniqueness
+  (Day 7 Screen 4 planning):** the one freshly-generated counterfactual
+  instance returned per call is only guaranteed unique *within that single
+  call*. Calling the endpoint separately for multiple customers (as Screen
+  4's Blue Team SOC feed does) can produce the same `transaction_id` for
+  different customers, since instance-id numbering isn't scoped per caller/
+  customer. Surfaced via a real React duplicate-key warning during Screen 4's
+  CDP-driven verification; worked around on the frontend with a composite
+  `customer_id + transaction_id` key. The underlying id-generation behavior
+  itself was left untouched (out of that session's frontend-only scope).
+
 ---
 
 ## 14. Deliverables

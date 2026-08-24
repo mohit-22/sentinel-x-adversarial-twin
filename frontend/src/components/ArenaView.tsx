@@ -1,0 +1,281 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, XAxis, YAxis } from "recharts";
+
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  ApiError,
+  KNOWN_ATTACK_GENOMES,
+  fetchMetrics,
+  triggerArenaRun,
+  type ArenaRunSummary,
+} from "@/lib/api";
+
+function formatPercent(value: number, digits = 2): string {
+  return `${(value * 100).toFixed(digits)}%`;
+}
+
+function familyLabel(family: string): string {
+  return KNOWN_ATTACK_GENOMES.find((g) => g.family === family)?.label ?? family;
+}
+
+/**
+ * Builds the two-point "Before Hardening" / "After Hardening" chart data.
+ * This is a 2-point comparison BY CONSTRUCTION -- /arena/run returns exactly
+ * one initial/final evasion-rate pair, never a time series. A line chart or
+ * anything implying a continuous curve or intermediate steps would
+ * misrepresent what the backend actually measured, so this stays a bar
+ * chart with exactly two categories.
+ */
+function chartData(result: ArenaRunSummary) {
+  return [
+    { stage: "Before Hardening", evasionRate: result.initial_evasion_rate * 100 },
+    { stage: "After Hardening", evasionRate: result.final_evasion_rate * 100 },
+  ];
+}
+
+/**
+ * Real returned numbers only -- no templated placeholder text that could
+ * be mistaken for live data if a field were ever missing.
+ */
+function narrativeSentence(result: ArenaRunSummary): string {
+  return (
+    `${familyLabel(result.attack_family)} initially evaded defenses on ` +
+    `${formatPercent(result.initial_evasion_rate)} of held-out fraud attempts. ` +
+    `After harvesting ${result.hard_examples_count.toLocaleString()} hard negatives and retraining, ` +
+    `evasion dropped to ${formatPercent(result.final_evasion_rate)} -- ` +
+    `a ${result.robustness_gain.toFixed(2)}% robustness gain.`
+  );
+}
+
+/**
+ * Screen 5: Adversarial Arena (CLAUDE.md §8) -- the demo narrative surface,
+ * distinct in purpose from Screen 2's Red Team Lab (engineer configuration:
+ * family + scale slider + quick-test mode + a Run Report data table). This
+ * screen has no scale slider -- always the official n=2000 run -- and leads
+ * with the ARG headline + narrative sentence + before/after chart; the
+ * Run ID/family/hard-examples detail Screen 2 foregrounds is demoted to a
+ * small footer here.
+ *
+ * Featured view is sourced ONLY from a real /metrics call
+ * (latest_arena_run) on mount -- never a hardcoded baseline number, even as
+ * a "well-intentioned" fallback, per §8's "every number from a real API
+ * call, never mock data" rule. If no arena run has happened yet this
+ * backend session, shows a plain honest empty state, same pattern as
+ * Screen 1's MetricCards ARG card.
+ */
+export function ArenaView() {
+  const [genomeId, setGenomeId] = useState(KNOWN_ATTACK_GENOMES[0].genome_id);
+  const [result, setResult] = useState<ArenaRunSummary | null>(null);
+  const [isFeaturedLoading, setIsFeaturedLoading] = useState(true);
+  const [isRunning, setIsRunning] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    fetchMetrics()
+      .then((metrics) => {
+        if (metrics.latest_arena_run) {
+          setResult(metrics.latest_arena_run);
+          setGenomeId(
+            KNOWN_ATTACK_GENOMES.find((g) => g.family === metrics.latest_arena_run?.attack_family)
+              ?.genome_id ?? KNOWN_ATTACK_GENOMES[0].genome_id,
+          );
+        }
+      })
+      .catch((err) => {
+        setError(err instanceof ApiError ? err.message : String(err));
+      })
+      .finally(() => setIsFeaturedLoading(false));
+
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, []);
+
+  async function handleTriggerRun() {
+    setIsRunning(true);
+    setElapsedSeconds(0);
+    setError(null);
+
+    timerRef.current = setInterval(() => {
+      setElapsedSeconds((s) => s + 1);
+    }, 1000);
+
+    try {
+      const summary = await triggerArenaRun(genomeId); // n_instances omitted -> official 2000
+      setResult(summary);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      if (timerRef.current) clearInterval(timerRef.current);
+      setIsRunning(false);
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-background p-8 text-foreground">
+      <div className="mx-auto max-w-4xl space-y-6">
+        <header className="border-b border-border pb-4">
+          <h1 className="text-xl font-semibold tracking-tight">Adversarial Arena</h1>
+          <p className="text-sm text-muted-foreground">
+            Attack finds a gap &rarr; defense hardens &rarr; gap closes
+          </p>
+        </header>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Run Configuration</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
+              <div className="flex-1 space-y-1.5">
+                <label htmlFor="arena-genome-select" className="text-sm font-medium text-muted-foreground">
+                  Attack family
+                </label>
+                <select
+                  id="arena-genome-select"
+                  value={genomeId}
+                  disabled={isRunning}
+                  onChange={(e) => setGenomeId(e.target.value)}
+                  className="w-full rounded-md border border-border bg-input/30 px-3 py-2 text-sm text-foreground disabled:opacity-50"
+                >
+                  {KNOWN_ATTACK_GENOMES.map((g) => (
+                    <option key={g.genome_id} value={g.genome_id}>
+                      {g.label} ({g.genome_id})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <Button onClick={handleTriggerRun} disabled={isRunning}>
+                {isRunning
+                  ? `Running... (${elapsedSeconds}s elapsed)`
+                  : "Trigger Official Run (n=2,000)"}
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Always the official n=2,000 methodology &mdash; no quick-test mode on this
+              screen (that&apos;s Screen 2&apos;s job). A full run takes ~100s.
+            </p>
+            {isRunning && (
+              <div className="space-y-1">
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                  <div className="h-full w-1/3 animate-pulse bg-primary" />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  /arena/run is a single blocking call (no WebSocket in the locked tech
+                  stack) &mdash; this is an elapsed-time indicator, not live
+                  per-stage progress.
+                </p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {error && (
+          <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+            {error}
+          </div>
+        )}
+
+        {!isFeaturedLoading && !result && !isRunning && (
+          <Card>
+            <CardContent>
+              <p className="border-l-2 border-dashed border-muted-foreground/50 pl-3 text-base font-medium text-muted-foreground">
+                Run Adversarial Arena to compute
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                No arena run has completed in this session yet
+              </p>
+            </CardContent>
+          </Card>
+        )}
+
+        {result && !isRunning && (
+          <>
+            <Card>
+              <CardContent className="space-y-4 py-2">
+                <div>
+                  <p className="text-xs text-muted-foreground">Adversarial Robustness Gain</p>
+                  <p
+                    className="text-5xl font-bold tabular-nums"
+                    style={{
+                      color:
+                        result.robustness_gain > 0
+                          ? "var(--neon-green)"
+                          : result.robustness_gain < 0
+                            ? "var(--neon-red)"
+                            : undefined,
+                    }}
+                  >
+                    {result.robustness_gain > 0 ? "+" : ""}
+                    {result.robustness_gain.toFixed(2)}%
+                  </p>
+                </div>
+                <p className="text-sm leading-relaxed text-foreground">{narrativeSentence(result)}</p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Evasion Rate: Before vs. After Hardening</CardTitle>
+                <p className="text-xs text-muted-foreground">
+                  Exactly two measured points -- /arena/run returns one initial/final
+                  evasion-rate pair, not a time series. No intermediate steps are
+                  measured or implied.
+                </p>
+              </CardHeader>
+              <CardContent>
+                <div className="h-64 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={chartData(result)} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                      <XAxis dataKey="stage" stroke="var(--muted-foreground)" fontSize={12} />
+                      <YAxis
+                        stroke="var(--muted-foreground)"
+                        fontSize={12}
+                        unit="%"
+                        domain={[0, (max: number) => Math.max(10, Math.ceil(max * 1.2))]}
+                      />
+                      <Bar dataKey="evasionRate" radius={[4, 4, 0, 0]}>
+                        <Cell fill="var(--neon-red)" />
+                        <Cell fill="var(--neon-green)" />
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card size="sm">
+              <CardContent>
+                <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs sm:grid-cols-4">
+                  <div>
+                    <dt className="text-muted-foreground">Run ID</dt>
+                    <dd className="font-mono">{result.run_id}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Attack family</dt>
+                    <dd>{familyLabel(result.attack_family)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Hard examples harvested</dt>
+                    <dd className="tabular-nums">{result.hard_examples_count.toLocaleString()}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Retrained F1</dt>
+                    <dd className="tabular-nums">{formatPercent(result.retrained_f1_score)}</dd>
+                  </div>
+                </dl>
+              </CardContent>
+            </Card>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}

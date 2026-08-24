@@ -133,7 +133,14 @@
       "Bash(google-chrome --headless=new --disable-gpu --no-sandbox --user-data-dir=/tmp/claude-1000/-home-mohit-Desktop-MasterCard-AI-project-/0239d943-0dca-4ed9-b4c9-21b92310f18a/scratchpad/chrome-profile-dump2 --dump-dom http://localhost:3000/red-team)",
       "Bash(google-chrome --headless=new --disable-gpu --no-sandbox --user-data-dir=/tmp/claude-1000/-home-mohit-Desktop-MasterCard-AI-project-/0239d943-0dca-4ed9-b4c9-21b92310f18a/scratchpad/chrome-profile-dump3 --dump-dom http://localhost:3000/payment-twin)",
       "Bash(google-chrome --headless=new --disable-gpu --no-sandbox --user-data-dir=/tmp/claude-1000/-home-mohit-Desktop-MasterCard-AI-project-/0239d943-0dca-4ed9-b4c9-21b92310f18a/scratchpad/chrome-profile-dump1b --dump-dom --virtual-time-budget=4000 http://localhost:3000/)",
-      "Bash(python3 drive_blue_team_soc.py)"
+      "Bash(python3 drive_blue_team_soc.py)",
+      "Bash(python3 check_arena_empty.py)",
+      "Bash(python3 drive_arena_run.py)",
+      "Bash(time curl -s -X POST http://127.0.0.1:8000/api/v1/arena/run -H 'Content-Type: application/json' -d '{\"genome_id\": \"ATK-MS-001\"}')",
+      "Bash(google-chrome --headless=new --disable-gpu --no-sandbox --user-data-dir=/tmp/claude-1000/-home-mohit-Desktop-MasterCard-AI-project-/0239d943-0dca-4ed9-b4c9-21b92310f18a/scratchpad/dump-s1 --dump-dom --virtual-time-budget=4000 http://localhost:3000/)",
+      "Bash(google-chrome --headless=new --disable-gpu --no-sandbox --user-data-dir=/tmp/claude-1000/-home-mohit-Desktop-MasterCard-AI-project-/0239d943-0dca-4ed9-b4c9-21b92310f18a/scratchpad/dump-s2 --dump-dom --virtual-time-budget=4000 http://localhost:3000/red-team)",
+      "Bash(google-chrome --headless=new --disable-gpu --no-sandbox --user-data-dir=/tmp/claude-1000/-home-mohit-Desktop-MasterCard-AI-project-/0239d943-0dca-4ed9-b4c9-21b92310f18a/scratchpad/dump-s3 --dump-dom --virtual-time-budget=4000 http://localhost:3000/payment-twin)",
+      "Bash(google-chrome --headless=new --disable-gpu --no-sandbox --user-data-dir=/tmp/claude-1000/-home-mohit-Desktop-MasterCard-AI-project-/0239d943-0dca-4ed9-b4c9-21b92310f18a/scratchpad/dump-s4 --dump-dom --virtual-time-budget=4000 http://localhost:3000/blue-team-soc)"
     ]
   }
 }
