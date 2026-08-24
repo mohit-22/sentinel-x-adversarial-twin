@@ -153,6 +153,19 @@ CURRENT PHASE: Day 7 — Frontend Screen 3 of 5: Payment Twin ONLY
 ALLOWED TO TOUCH: frontend/src/app/payment-twin/ (or equivalent route), frontend/src/components/PaymentTwinView.tsx, frontend/src/lib/api.ts (add new client functions only)
 NOT ALLOWED TO TOUCH: Screens 1/2's existing files, Screens 4/5, backend/
 
+CURRENT PHASE: Day 7 — Frontend Screen 4 of 5: Blue Team SOC ONLY
+ALLOWED TO TOUCH: frontend/src/app/blue-team-soc/ (or equivalent route), frontend/src/components/BlueTeamSOC.tsx, frontend/src/components/ShapModal.tsx, frontend/src/lib/api.ts (add new client functions only)
+NOT ALLOWED TO TOUCH: Screens 1/2/3's existing files, Screen 5, backend/
+
+CURRENT PHASE: Day 7 (bugfix interrupt) — fix duplicate-row bug in embed_and_engineer ONLY
+ALLOWED TO TOUCH: backend/app/red_team/arena.py (embed_and_engineer function ONLY -- no other function in this file changes), backend/tests/test_arena.py
+NOT ALLOWED TO TOUCH: everything else in arena.py (run_attack, harvest_hard_negatives, re_test, run_arena_mvp_gate, run_arena_for_all_families, mutation logic), graph_engine.py (ruled out as the actual root cause), blue_team/, frontend/, Screen 4 work (resumes after this bugfix is committed and confirmed clean)
+
+
+CURRENT PHASE: Day 7-pre — fix embed_and_engineer duplicate-row bug (arena.py)
+ALLOWED TO TOUCH: backend/app/red_team/arena.py — ONLY the embed_and_engineer function, ONLY adding a duplicate-drop after combine_clean_and_injected. Do NOT touch any other function in arena.py (run_attack, harvest_hard_negatives, retrain, re_test, apply_mutation, run_arena_mvp_gate, run_arena_for_all_families) — those are Day 5/6.5 verified and must remain byte-identical in behavior.
+NOT ALLOWED TO TOUCH: everything else, including frontend/
+
 
 ```
 CURRENT PHASE: [not started]

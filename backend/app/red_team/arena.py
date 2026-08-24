@@ -128,10 +128,20 @@ def embed_and_engineer(
     """Embed freshly-generated/mutated rows into the affected customers' real
     transaction history before feature engineering -- required for velocity
     features to mean anything (approved design decision A).
+
+    new_rows is assumed disjoint from clean_history for the arena's own
+    callers (attack instances always get synthetic ids in a separate
+    namespace), but that assumption isn't guaranteed for every caller --
+    e.g. /detect scoring a transaction_id that already exists in a
+    customer's real history. Deduplicating on transaction_id here (keeping
+    the new_rows copy, since that's the row actually being scored/embedded)
+    makes the function correct regardless of that overlap, instead of
+    silently fanning out into duplicate feature rows.
     """
     affected_customers = new_rows["customer_id"].unique()
     relevant_clean_history = clean_history[clean_history["customer_id"].isin(affected_customers)]
     combined = combine_clean_and_injected(relevant_clean_history, new_rows)
+    combined = combined.drop_duplicates(subset="transaction_id", keep="last")
     return engineer_features(combined, customers)
 
 

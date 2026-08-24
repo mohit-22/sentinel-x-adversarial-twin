@@ -119,7 +119,13 @@
       "Bash(curl -s http://127.0.0.1:9333/json/version -o /dev/null -w \"%{http_code}\\\\n\")",
       "Bash(python3 drive_payment_twin.py)",
       "Bash(kill -9 32005 32664)",
-      "Bash(pkill -9 -f \"remote-debugging-port=9333\")"
+      "Bash(pkill -9 -f \"remote-debugging-port=9333\")",
+      "Bash(curl -s -w \"\\\\nHTTP %{http_code}\\\\n\" http://127.0.0.1:8000/api/v1/explain/TXN-00000001)",
+      "Bash(curl -s \"http://127.0.0.1:8000/api/v1/payment-twin/CUST-000000?attack_family=micro_structuring\")",
+      "Bash(curl -s -X POST http://127.0.0.1:8000/api/v1/detect -H 'Content-Type: application/json' -d @/tmp/claude-1000/-home-mohit-Desktop-MasterCard-AI-project-/0239d943-0dca-4ed9-b4c9-21b92310f18a/scratchpad/detect_req.json -w '\\\\nHTTP %{http_code}\\\\n')",
+      "Bash(curl -s -X POST http://127.0.0.1:8000/api/v1/detect -H 'Content-Type: application/json' -d @/tmp/claude-1000/-home-mohit-Desktop-MasterCard-AI-project-/0239d943-0dca-4ed9-b4c9-21b92310f18a/scratchpad/detect_normal_only.json -w '\\\\nHTTP %{http_code}\\\\n')",
+      "Bash(pkill -9 -f \"uvicorn app.main:app\")",
+      "Bash(grep -v \"LightGBM\\\\|^$\")"
     ]
   }
 }
