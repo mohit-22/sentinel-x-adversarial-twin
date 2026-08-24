@@ -166,6 +166,10 @@ CURRENT PHASE: Day 7-pre — fix embed_and_engineer duplicate-row bug (arena.py)
 ALLOWED TO TOUCH: backend/app/red_team/arena.py — ONLY the embed_and_engineer function, ONLY adding a duplicate-drop after combine_clean_and_injected. Do NOT touch any other function in arena.py (run_attack, harvest_hard_negatives, retrain, re_test, apply_mutation, run_arena_mvp_gate, run_arena_for_all_families) — those are Day 5/6.5 verified and must remain byte-identical in behavior.
 NOT ALLOWED TO TOUCH: everything else, including frontend/
 
+CURRENT PHASE: Day 7 — Frontend Screen 4 of 5: Blue Team SOC ONLY
+ALLOWED TO TOUCH: frontend/src/app/blue-team-soc/ (or equivalent route), frontend/src/components/BlueTeamSOC.tsx, frontend/src/components/ShapModal.tsx, frontend/src/lib/api.ts (add new client functions only)
+NOT ALLOWED TO TOUCH: Screens 1/2/3's existing files, Screen 5, backend/ (the bugfix is done and committed — don't touch backend/ again this phase)
+
 
 ```
 CURRENT PHASE: [not started]

@@ -253,3 +253,73 @@ export async function compileSandbox(freeText: string): Promise<unknown> {
   }
   return response.json();
 }
+
+/** Mirrors backend/app/core/schemas.py's DetectionResult exactly. */
+export interface DetectionResult {
+  transaction_id: string;
+  risk_score: number;
+  decision: string;
+  reason_codes: Record<string, string>[];
+  latency_ms: number;
+}
+
+/**
+ * POST /api/v1/detect -- score a batch of transactions with the cached,
+ * already-trained detector. reason_codes is honestly [] on every result --
+ * SHAP is Day 8 work, not faked here.
+ */
+export async function detectTransactions(
+  transactions: TransactionBase[],
+): Promise<DetectionResult[]> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/detect`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ transactions }),
+    });
+  } catch {
+    throw new ApiError(
+      `Could not reach backend at ${API_BASE_URL}/detect -- is the server running?`,
+    );
+  }
+  if (!response.ok) {
+    let detail = response.statusText;
+    try {
+      const errorBody = await response.json();
+      if (errorBody?.detail) detail = errorBody.detail;
+    } catch {
+      // response body wasn't JSON -- fall back to statusText
+    }
+    throw new ApiError(`POST /detect returned ${response.status}: ${detail}`, response.status);
+  }
+  const body = (await response.json()) as { results: DetectionResult[] };
+  return body.results;
+}
+
+/**
+ * GET /api/v1/explain/{transaction_id} -- SHAP reason codes. Backend
+ * implementation is Day 8 work; today this ALWAYS returns 501. Callers
+ * should check `error.status === 501` to show the honest "not yet
+ * available" state, same pattern as compileSandbox.
+ */
+export async function explainTransaction(transactionId: string): Promise<unknown> {
+  let response: Response;
+  const url = `${API_BASE_URL}/explain/${encodeURIComponent(transactionId)}`;
+  try {
+    response = await fetch(url, { cache: "no-store" });
+  } catch {
+    throw new ApiError(`Could not reach backend at ${url} -- is the server running?`);
+  }
+  if (!response.ok) {
+    let detail = response.statusText;
+    try {
+      const errorBody = await response.json();
+      if (errorBody?.detail) detail = errorBody.detail;
+    } catch {
+      // response body wasn't JSON -- fall back to statusText
+    }
+    throw new ApiError(`GET /explain/${transactionId} returned ${response.status}: ${detail}`, response.status);
+  }
+  return response.json();
+}

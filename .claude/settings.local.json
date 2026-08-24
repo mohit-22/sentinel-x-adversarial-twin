@@ -125,7 +125,15 @@
       "Bash(curl -s -X POST http://127.0.0.1:8000/api/v1/detect -H 'Content-Type: application/json' -d @/tmp/claude-1000/-home-mohit-Desktop-MasterCard-AI-project-/0239d943-0dca-4ed9-b4c9-21b92310f18a/scratchpad/detect_req.json -w '\\\\nHTTP %{http_code}\\\\n')",
       "Bash(curl -s -X POST http://127.0.0.1:8000/api/v1/detect -H 'Content-Type: application/json' -d @/tmp/claude-1000/-home-mohit-Desktop-MasterCard-AI-project-/0239d943-0dca-4ed9-b4c9-21b92310f18a/scratchpad/detect_normal_only.json -w '\\\\nHTTP %{http_code}\\\\n')",
       "Bash(pkill -9 -f \"uvicorn app.main:app\")",
-      "Bash(grep -v \"LightGBM\\\\|^$\")"
+      "Bash(grep -v \"LightGBM\\\\|^$\")",
+      "Bash(npx eslint *)",
+      "Bash(pkill -9 -f \"remote-debugging-port\")",
+      "Bash(google-chrome --headless=new --disable-gpu --no-sandbox --remote-debugging-port=9333 --window-size=1400,1000 about:blank)",
+      "Bash(google-chrome --headless=new --disable-gpu --no-sandbox --user-data-dir=/tmp/claude-1000/-home-mohit-Desktop-MasterCard-AI-project-/0239d943-0dca-4ed9-b4c9-21b92310f18a/scratchpad/chrome-profile-dump --dump-dom http://localhost:3000/)",
+      "Bash(google-chrome --headless=new --disable-gpu --no-sandbox --user-data-dir=/tmp/claude-1000/-home-mohit-Desktop-MasterCard-AI-project-/0239d943-0dca-4ed9-b4c9-21b92310f18a/scratchpad/chrome-profile-dump2 --dump-dom http://localhost:3000/red-team)",
+      "Bash(google-chrome --headless=new --disable-gpu --no-sandbox --user-data-dir=/tmp/claude-1000/-home-mohit-Desktop-MasterCard-AI-project-/0239d943-0dca-4ed9-b4c9-21b92310f18a/scratchpad/chrome-profile-dump3 --dump-dom http://localhost:3000/payment-twin)",
+      "Bash(google-chrome --headless=new --disable-gpu --no-sandbox --user-data-dir=/tmp/claude-1000/-home-mohit-Desktop-MasterCard-AI-project-/0239d943-0dca-4ed9-b4c9-21b92310f18a/scratchpad/chrome-profile-dump1b --dump-dom --virtual-time-budget=4000 http://localhost:3000/)",
+      "Bash(python3 drive_blue_team_soc.py)"
     ]
   }
 }
