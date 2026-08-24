@@ -1,0 +1,85 @@
+@import "tailwindcss";
+
+/* Sentinel-X dark SOC theme (CLAUDE.md §8: "dark mode SOC aesthetic, deep
+   grays, neon green (ALLOW) / neon red (BLOCK)"). This is the ONLY theme --
+   not a light/dark toggle, the product itself is dark-only by spec. */
+:root {
+  --background: #0a0b0d;
+  --foreground: #e4e7eb;
+
+  --card: #121417;
+  --card-foreground: #e4e7eb;
+
+  --popover: #121417;
+  --popover-foreground: #e4e7eb;
+
+  /* neon green: ALLOW / positive / primary action */
+  --primary: #39ff88;
+  --primary-foreground: #04140a;
+
+  --secondary: #1c1f24;
+  --secondary-foreground: #e4e7eb;
+
+  --muted: #1a1d21;
+  --muted-foreground: #8a919c;
+
+  --accent: #1c1f24;
+  --accent-foreground: #e4e7eb;
+
+  /* neon red: BLOCK / negative -- shadcn's built-in "destructive" variant
+     maps directly onto CLAUDE.md's BLOCK semantics. */
+  --destructive: #ff3b5c;
+  --destructive-foreground: #1a0507;
+
+  --border: #23262b;
+  --input: #23262b;
+  --ring: #39ff88;
+
+  --radius: 0.625rem;
+
+  /* Extra semantic tokens beyond the standard shadcn set, for the
+     ALLOW/STEP_UP/REVIEW/BLOCK decision spectrum used across the SOC UI. */
+  --neon-green: #39ff88;
+  --neon-red: #ff3b5c;
+  --status-live: #39ff88;
+  --status-sandbox: #f5c04a;
+  --status-error: #ff3b5c;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-neon-green: var(--neon-green);
+  --color-neon-red: var(--neon-red);
+  --color-status-live: var(--status-live);
+  --color-status-sandbox: var(--status-sandbox);
+  --color-status-error: var(--status-error);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
