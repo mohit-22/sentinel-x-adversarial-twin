@@ -20,6 +20,32 @@ function formatPercent(value: number, digits = 2): string {
   return `${(value * 100).toFixed(digits)}%`;
 }
 
+function decisionColor(decision: string): string {
+  if (decision === "ALLOW") return "var(--neon-green)";
+  if (decision === "BLOCK") return "var(--neon-red)";
+  return "var(--status-sandbox)"; // STEP_UP, REVIEW -- amber
+}
+
+/** Mirrors backend/app/api/endpoints.py's SandboxCompileResponse exactly
+ * (Day 8b). Defined locally, not in lib/api.ts -- api.ts isn't in today's
+ * ALLOWED_TO_TOUCH; compileSandbox's existing Promise<unknown> return type
+ * is cast to this shape here, same pattern ShapModal.tsx used for
+ * ExplainResponse.
+ */
+interface SandboxDetectionResult {
+  transaction_id: string;
+  risk_score: number;
+  decision: string;
+  latency_ms: number;
+}
+interface SandboxCompileResponse {
+  family: string;
+  genome_id: string;
+  parameters_used: Record<string, unknown>;
+  rationale: string;
+  results: SandboxDetectionResult[];
+}
+
 /**
  * Screen 2: Red Team Lab (CLAUDE.md §8). Attack family selector, scale
  * slider, hardening trigger, "live stream" (honestly reinterpreted below),
@@ -43,10 +69,9 @@ export function RedTeamControls() {
   const [runError, setRunError] = useState<string | null>(null);
 
   const [sandboxText, setSandboxText] = useState("");
-  const [sandboxState, setSandboxState] = useState<
-    "idle" | "loading" | "unavailable" | "error" | "success"
-  >("idle");
+  const [sandboxState, setSandboxState] = useState<"idle" | "loading" | "error" | "success">("idle");
   const [sandboxMessage, setSandboxMessage] = useState<string | null>(null);
+  const [sandboxResult, setSandboxResult] = useState<SandboxCompileResponse | null>(null);
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -85,17 +110,14 @@ export function RedTeamControls() {
   async function handleSandboxSubmit() {
     setSandboxState("loading");
     setSandboxMessage(null);
+    setSandboxResult(null);
     try {
-      await compileSandbox(sandboxText);
+      const body = await compileSandbox(sandboxText);
+      setSandboxResult(body as SandboxCompileResponse);
       setSandboxState("success");
     } catch (err) {
-      if (err instanceof ApiError && err.status === 501) {
-        setSandboxState("unavailable");
-        setSandboxMessage(err.message);
-      } else {
-        setSandboxState("error");
-        setSandboxMessage(err instanceof ApiError ? err.message : String(err));
-      }
+      setSandboxState("error");
+      setSandboxMessage(err instanceof ApiError ? err.message : String(err));
     }
   }
 
@@ -211,8 +233,10 @@ export function RedTeamControls() {
           </CardHeader>
           <CardContent className="space-y-3">
             <p className="text-xs text-muted-foreground">
-              Free text &rarr; LLM &rarr; validated genome &rarr; live simulation. The
-              compiler backend is Day 8 work and is not built yet.
+              Free text &rarr; LLM selects the closest attack family and proposes
+              bounded parameter overrides &rarr; validated &rarr; simulated &rarr; scored
+              via the real detector. The LLM never scores a transaction itself
+              (CLAUDE.md §5) &mdash; it only ever produces genome JSON.
             </p>
             <textarea
               value={sandboxText}
@@ -230,25 +254,52 @@ export function RedTeamControls() {
               {sandboxState === "loading" ? "Compiling..." : "Compile Genome"}
             </Button>
 
-            {sandboxState === "unavailable" && (
-              <div
-                className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground"
-                style={{ borderColor: "var(--status-sandbox)" }}
-              >
-                <p className="font-medium" style={{ color: "var(--status-sandbox)" }}>
-                  Sandbox not yet available
-                </p>
-                <p className="mt-1">{sandboxMessage}</p>
-              </div>
-            )}
             {sandboxState === "error" && (
               <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
                 {sandboxMessage}
               </div>
             )}
-            {sandboxState === "success" && (
-              <div className="rounded-lg border border-primary/40 bg-primary/10 p-3 text-sm text-primary">
-                Genome compiled -- this path isn&apos;t expected to succeed until Day 8.
+            {sandboxState === "success" && sandboxResult && (
+              <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-medium">Compiled Genome</h3>
+                  <Badge variant="outline" className="font-mono text-[10px]">
+                    {sandboxResult.genome_id}
+                  </Badge>
+                </div>
+                <p className="text-xs text-muted-foreground">{sandboxResult.rationale}</p>
+                <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3">
+                  {Object.entries(sandboxResult.parameters_used).map(([key, value]) => (
+                    <div key={key}>
+                      <dt className="text-muted-foreground">{key}</dt>
+                      <dd className="font-mono">{JSON.stringify(value)}</dd>
+                    </div>
+                  ))}
+                </dl>
+                <div className="space-y-1.5">
+                  <p className="text-xs font-medium text-muted-foreground">
+                    {sandboxResult.results.length} scored transactions (real /detect output)
+                  </p>
+                  <div className="max-h-64 space-y-1 overflow-y-auto">
+                    {sandboxResult.results.map((r) => (
+                      <div
+                        key={r.transaction_id}
+                        className="flex items-center justify-between rounded border p-1.5 text-xs"
+                        style={{ borderColor: decisionColor(r.decision), borderLeftWidth: 3 }}
+                      >
+                        <span className="font-mono text-muted-foreground">{r.transaction_id}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="tabular-nums text-muted-foreground">
+                            risk {r.risk_score.toFixed(3)}
+                          </span>
+                          <span className="font-semibold" style={{ color: decisionColor(r.decision) }}>
+                            {r.decision}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
           </CardContent>

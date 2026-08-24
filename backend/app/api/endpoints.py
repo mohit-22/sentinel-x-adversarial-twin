@@ -37,6 +37,12 @@ from app.red_team.attack_genomes import (
     SYNTHETIC_VOICE_AUTHORIZATION_GENOME,
 )
 from app.red_team.attack_injector import generate_micro_structuring_attacks, validate_injected_transactions
+from app.red_team.sandbox_compiler import (
+    SandboxCompilerError,
+    compile_genome,
+    generate_sandbox_instance,
+    merge_genome,
+)
 from app.simulator.clean_generator import (
     generate_customer_profiles,
     generate_merchants,
@@ -353,20 +359,54 @@ def metrics() -> MetricsResponse:
     )
 
 
-# --- 6. POST /sandbox/compile -- Day 8 ---------------------------------------
+# --- 6. POST /sandbox/compile -- Day 8b --------------------------------------
 
 
-@router.post("/sandbox/compile")
-def sandbox_compile():
-    """Free text -> LLM -> Pydantic-validated genome -> live simulation --
-    implemented in Day 8.
+class SandboxCompileRequest(BaseModel):
+    text: str
 
-    Not built today: no LLM genome-compiler exists yet. Returns a clean
-    501, not fake genome output.
+
+class SandboxCompileResponse(BaseModel):
+    family: str
+    genome_id: str
+    parameters_used: Dict
+    rationale: str
+    results: List[DetectionResult]
+
+
+@router.post("/sandbox/compile", response_model=SandboxCompileResponse)
+def sandbox_compile(request: SandboxCompileRequest) -> SandboxCompileResponse:
+    """Free text -> LLM selects the closest of the 5 canonical families and
+    proposes bounded parameter overrides -> Pydantic + bounds validated ->
+    merged onto a deep copy of that family's canonical genome
+    (attack_genomes.py itself untouched) -> simulated via that family's own
+    existing generator (Day 6.5 ATTACK_GENERATORS registry) -> scored via
+    the exact same /detect logic (called directly, not reimplemented).
+
+    CLAUDE.md §5's design rule: the LLM never scores a transaction or makes
+    a decision -- only genome JSON. All scoring below is the same
+    deterministic ML /detect already uses.
     """
-    raise HTTPException(
-        status_code=501,
-        detail="sandbox/compile endpoint not implemented yet -- LLM genome compiler is Day 8 work",
+    state = _get_state()
+    customers, merchants = state["customers"], state["merchants"]
+
+    try:
+        proposal = compile_genome(request.text)
+    except SandboxCompilerError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    genome = merge_genome(proposal)
+    rows = generate_sandbox_instance(genome, customers, merchants)
+    transactions = validate_injected_transactions(rows)
+
+    detect_response = detect(DetectRequest(transactions=transactions))
+
+    return SandboxCompileResponse(
+        family=genome["family"],
+        genome_id=genome["genome_id"],
+        parameters_used=genome["parameters"],
+        rationale=proposal.rationale,
+        results=detect_response.results,
     )
 
 

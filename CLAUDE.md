@@ -195,6 +195,12 @@ NOT ALLOWED TO TOUCH: any other frontend screen, detector.py's training logic (r
 
 
 
+CURRENT PHASE: Day 8b — Judge Sandbox (LLM genome compiler)
+ALLOWED TO TOUCH: backend/app/red_team/ (a new sandbox-compiler module), backend/app/api/endpoints.py (only /sandbox/compile route), backend/tests/, frontend/src/components/RedTeamControls.tsx (update to consume real data instead of the 501 state)
+NOT ALLOWED TO TOUCH: any other frontend screen, arena.py's core logic (reuse it), existing attack_genomes.py (don't modify the 5 canonical genomes)
+
+
+
 
 ---
 

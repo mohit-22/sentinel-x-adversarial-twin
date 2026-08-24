@@ -10,3 +10,5 @@ networkx
 fastapi
 uvicorn
 shap
+python-dotenv
+groq

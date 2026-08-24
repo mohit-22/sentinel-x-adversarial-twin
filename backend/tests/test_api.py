@@ -189,10 +189,56 @@ def test_explain_unknown_transaction_id_returns_404_not_a_crash(client):
     assert "TEST-TXN-0001" in response.json()["detail"]
 
 
-def test_sandbox_compile_returns_501_not_a_crash(client):
+def test_sandbox_compile_missing_text_returns_422(client):
+    """Day 8b: /sandbox/compile is real now. An empty body is a genuine
+    request-validation failure (missing required `text`), FastAPI's own
+    automatic 422 -- not the old blanket 501.
+    """
     response = client.post("/api/v1/sandbox/compile", json={})
-    assert response.status_code == 501
-    assert "Day 8" in response.json()["detail"]
+    assert response.status_code == 422
+
+
+def test_sandbox_compile_end_to_end_with_mocked_llm(client):
+    """The LLM call itself (network/non-deterministic/costs credits) is
+    mocked, same pattern as test_arena_run_default_n_instances_is_2000_mocked
+    mocking the one expensive path. Everything downstream -- merge, real
+    generation via the family's own generator, real /detect scoring -- runs
+    for real, confirming the full route end to end.
+    """
+    from app.red_team.sandbox_compiler import GenomeProposal
+
+    fake_proposal = GenomeProposal(
+        family="synthetic_voice_authorization",
+        parameter_overrides={"impersonated_role": "bank_agent"},
+        rationale="mocked for a fast, deterministic test",
+    )
+    with patch("app.api.endpoints.compile_genome", return_value=fake_proposal):
+        response = client.post(
+            "/api/v1/sandbox/compile",
+            json={"text": "a caller impersonates a bank agent to push a step-up bypass"},
+        )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["family"] == "synthetic_voice_authorization"
+    assert body["genome_id"] == "ATK-VD-001"
+    assert body["parameters_used"]["impersonated_role"] == ["bank_agent"]
+    assert body["rationale"] == "mocked for a fast, deterministic test"
+    assert len(body["results"]) >= 1
+    for result in body["results"]:
+        assert 0.0 <= result["risk_score"] <= 1.0
+        assert result["decision"] in ("ALLOW", "STEP_UP", "REVIEW", "BLOCK")
+
+
+def test_sandbox_compile_llm_failure_returns_422_not_a_crash(client):
+    from app.red_team.sandbox_compiler import SandboxCompilerError
+
+    with patch(
+        "app.api.endpoints.compile_genome",
+        side_effect=SandboxCompilerError("LLM proposal failed validation twice."),
+    ):
+        response = client.post("/api/v1/sandbox/compile", json={"text": "anything"})
+    assert response.status_code == 422
+    assert "failed validation twice" in response.json()["detail"]
 
 
 # ============================================================================
