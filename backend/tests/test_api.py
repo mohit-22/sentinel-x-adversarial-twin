@@ -189,3 +189,64 @@ def test_sandbox_compile_returns_501_not_a_crash(client):
     response = client.post("/api/v1/sandbox/compile", json={})
     assert response.status_code == 501
     assert "Day 8" in response.json()["detail"]
+
+
+# ============================================================================
+# GET /payment-twin/{customer_id} -- Day 7 Screen 3, approved 7th endpoint
+# ============================================================================
+
+
+def test_payment_twin_returns_real_customer_and_counterfactual(client):
+    response = client.get("/api/v1/payment-twin/CUST-000000")
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["customer"]["customer_id"] == "CUST-000000"
+    assert body["customer"]["base_location"]
+    assert len(body["customer"]["primary_devices"]) > 0
+
+    assert len(body["normal_transactions"]) > 0
+    assert all(t["customer_id"] == "CUST-000000" for t in body["normal_transactions"])
+    # normal_transactions are TransactionBase, which has no is_fraud field at all
+    assert all("is_fraud" not in t for t in body["normal_transactions"])
+
+    assert len(body["counterfactual_transactions"]) > 0
+    assert all(t["customer_id"] == "CUST-000000" for t in body["counterfactual_transactions"])
+    fraud_legs = [t for t in body["counterfactual_transactions"] if t["is_fraud"] == 1]
+    assert len(fraud_legs) > 0
+    assert all(t["attack_family"] == "micro_structuring" for t in fraud_legs)
+    assert all(t["genome_id"] == "ATK-MS-001" for t in fraud_legs)
+
+
+def test_payment_twin_respects_attack_family_query_param(client):
+    response = client.get("/api/v1/payment-twin/CUST-000000?attack_family=synthetic_identity_drift")
+    assert response.status_code == 200
+    body = response.json()
+    fraud_legs = [t for t in body["counterfactual_transactions"] if t["is_fraud"] == 1]
+    assert len(fraud_legs) > 0
+    assert all(t["genome_id"] == "ATK-ID-001" for t in fraud_legs)
+    assert all(t["device_id"].startswith("DRIFT-DEV-") for t in fraud_legs)
+
+
+def test_payment_twin_unknown_customer_returns_404(client):
+    response = client.get("/api/v1/payment-twin/CUST-999999-DOES-NOT-EXIST")
+    assert response.status_code == 404
+    assert "CUST-999999-DOES-NOT-EXIST" in response.json()["detail"]
+
+
+def test_payment_twin_unknown_attack_family_returns_404(client):
+    response = client.get("/api/v1/payment-twin/CUST-000000?attack_family=not_a_real_family")
+    assert response.status_code == 404
+    assert "not_a_real_family" in response.json()["detail"]
+
+
+def test_payment_twin_counterfactual_never_collides_with_real_beneficiaries(client):
+    """The counterfactual is illustrative, not a mutation of real rows --
+    confirms its mule/drift beneficiaries never coincide with transaction
+    ids already present in the customer's real normal_transactions.
+    """
+    response = client.get("/api/v1/payment-twin/CUST-000000")
+    body = response.json()
+    normal_ids = {t["transaction_id"] for t in body["normal_transactions"]}
+    counterfactual_ids = {t["transaction_id"] for t in body["counterfactual_transactions"]}
+    assert normal_ids.isdisjoint(counterfactual_ids)

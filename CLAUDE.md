@@ -140,9 +140,19 @@ ALLOWED TO TOUCH: frontend/ (new directory), specifically frontend/src/app/, fro
 NOT ALLOWED TO TOUCH: the other 4 screens, backend/ (already done, don't touch again)
 
 
+
+
+
 CURRENT PHASE: Day 7 — Frontend Screen 2 of 5: Red Team Lab ONLY
 ALLOWED TO TOUCH: frontend/src/app/red-team/ (or equivalent route), frontend/src/components/RedTeamControls.tsx, frontend/src/lib/api.ts (add new client functions only, don't touch existing ones)
 NOT ALLOWED TO TOUCH: Screen 1's existing files, Screens 3/4/5, backend/
+
+
+
+CURRENT PHASE: Day 7 — Frontend Screen 3 of 5: Payment Twin ONLY
+ALLOWED TO TOUCH: frontend/src/app/payment-twin/ (or equivalent route), frontend/src/components/PaymentTwinView.tsx, frontend/src/lib/api.ts (add new client functions only)
+NOT ALLOWED TO TOUCH: Screens 1/2's existing files, Screens 4/5, backend/
+
 
 ```
 CURRENT PHASE: [not started]
@@ -388,6 +398,15 @@ scattered through the codebase — one config source of truth):**
 - `GET /api/v1/explain/{transaction_id}` — SHAP reason codes
 - `GET /api/v1/metrics` — current global model metrics
 - `POST /api/v1/sandbox/compile` — free text → validated genome → live simulation
+- `GET /api/v1/payment-twin/{customer_id}` — one customer's real clean
+  transaction history plus one freshly-generated counterfactual attack
+  instance (query param `attack_family`, default `micro_structuring`).
+  **Approved exception** to "no additional endpoints" (Day 7 Screen 3
+  planning turn): neither `/simulate` nor `/arena/run` exposes any
+  per-customer or per-transaction detail (verified against their actual
+  response models before proposing this, not assumed), and Screen 3's
+  entire purpose is a real normal-vs-attacked customer comparison — there
+  was no honest way to build it from the original six endpoints.
 
 No additional endpoints without approval. Endpoint handlers call existing
 service-layer functions — never reimplement business logic in the route layer.

@@ -26,8 +26,8 @@ from app.blue_team.detector import FEATURE_COLUMNS, evaluate_detector, run_blue_
 from app.blue_team.features import combine_clean_and_injected, engineer_features
 from app.blue_team.graph_engine import apply_graph_features
 from app.core.config import N_CUSTOMERS, N_MERCHANTS, N_TRANSACTIONS, SEED, SIMULATION_DAYS
-from app.core.schemas import ArenaRunSummary, DetectionResult, TransactionBase
-from app.red_team.arena import embed_and_engineer, run_arena_mvp_gate
+from app.core.schemas import ArenaRunSummary, CustomerProfile, DetectionResult, InjectedTransaction, TransactionBase
+from app.red_team.arena import embed_and_engineer, generate_matched_population_attacks, run_arena_mvp_gate
 from app.red_team.attack_genomes import (
     BEHAVIORAL_CAMOUFLAGE_GENOME,
     MICRO_STRUCTURING_GENOME,
@@ -35,12 +35,14 @@ from app.red_team.attack_genomes import (
     SYNTHETIC_IDENTITY_DRIFT_GENOME,
     SYNTHETIC_VOICE_AUTHORIZATION_GENOME,
 )
-from app.red_team.attack_injector import generate_micro_structuring_attacks
+from app.red_team.attack_injector import generate_micro_structuring_attacks, validate_injected_transactions
 from app.simulator.clean_generator import (
     generate_customer_profiles,
     generate_merchants,
     generate_transaction_base,
     simulate_payment_twin,
+    validate_customers,
+    validate_transactions,
 )
 from app.simulator.fidelity import compute_fidelity_report
 
@@ -345,4 +347,64 @@ def sandbox_compile():
     raise HTTPException(
         status_code=501,
         detail="sandbox/compile endpoint not implemented yet -- LLM genome compiler is Day 8 work",
+    )
+
+
+# --- 7. GET /payment-twin/{customer_id} -- APPROVED EXCEPTION to §7's -------
+# "exactly six endpoints, no more" rule (Day 7 Screen 3 planning turn).
+#
+# Investigated first, not assumed: neither /simulate's response (aggregate
+# counts + fidelity only) nor /arena/run's ArenaRunSummary (aggregate
+# evasion/ARG stats only) exposes any per-customer or per-transaction
+# detail. Screen 3's entire purpose is a real normal-vs-attacked customer
+# comparison, so there was no honest way to build it from the existing six
+# endpoints. Explicitly approved as a 7th endpoint rather than faked with
+# static "illustrative" data. CLAUDE.md §7 updated to document it.
+#
+# Reuses existing, already-verified functions exclusively -- no new
+# business logic here, matching the same rule that governs the other six:
+#   - generate_matched_population_attacks (arena.py, Day 6.5) for the one
+#     counterfactual instance, called with a single-customer list so it's
+#     genuinely n=1, not a full arena run -- no LightGBM training involved.
+#   - validate_customers / validate_transactions (clean_generator.py,
+#     Day 1-2) and validate_injected_transactions (attack_injector.py,
+#     Day 3) for the Pydantic-boundary conversion.
+
+
+class PaymentTwinResponse(BaseModel):
+    customer: CustomerProfile
+    normal_transactions: List[TransactionBase]
+    counterfactual_transactions: List[InjectedTransaction]
+
+
+@router.get("/payment-twin/{customer_id}", response_model=PaymentTwinResponse)
+def payment_twin(customer_id: str, attack_family: str = "micro_structuring") -> PaymentTwinResponse:
+    """One customer's real clean transaction history, plus ONE freshly-
+    generated counterfactual attack instance for that same customer (per
+    the requested attack_family) -- for Screen 3's side-by-side comparison.
+    """
+    state = _get_state()
+    customers, clean_history, merchants = state["customers"], state["clean_history"], state["merchants"]
+
+    customer_rows = customers[customers["customer_id"] == customer_id]
+    if customer_rows.empty:
+        raise HTTPException(status_code=404, detail=f"unknown customer_id: {customer_id!r}")
+
+    genome = next((g for g in _GENOME_REGISTRY.values() if g["family"] == attack_family), None)
+    if genome is None:
+        known_families = sorted({g["family"] for g in _GENOME_REGISTRY.values()})
+        raise HTTPException(
+            status_code=404,
+            detail=f"unknown attack_family: {attack_family!r}. Known: {known_families}",
+        )
+
+    normal_rows = clean_history[clean_history["customer_id"] == customer_id].sort_values("timestamp")
+    counterfactual_raw = generate_matched_population_attacks(
+        genome, customers, merchants, customer_ids=[customer_id], seed=SEED
+    )
+
+    return PaymentTwinResponse(
+        customer=validate_customers(customer_rows)[0],
+        normal_transactions=validate_transactions(normal_rows),
+        counterfactual_transactions=validate_injected_transactions(counterfactual_raw),
     )
