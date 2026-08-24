@@ -200,6 +200,11 @@ ALLOWED TO TOUCH: backend/app/red_team/ (a new sandbox-compiler module), backend
 NOT ALLOWED TO TOUCH: any other frontend screen, arena.py's core logic (reuse it), existing attack_genomes.py (don't modify the 5 canonical genomes)
 
 
+CURRENT PHASE: Cross-Family Generalization Matrix (post-Day 8b differentiator)
+ALLOWED TO TOUCH: backend/app/red_team/arena.py (ONLY the new run_multi_family_hardening function -- every other function must remain byte-identical), backend/app/api/endpoints.py (ONLY the new /arena/multi-family-run route), backend/tests/, frontend/src/components/ArenaView.tsx (the new matrix section only), CLAUDE.md §7 (document the exception)
+NOT ALLOWED TO TOUCH: anything else, including all other frontend screens and every other function in arena.py
+
+
 
 
 ---
@@ -442,6 +447,15 @@ scattered through the codebase — one config source of truth):**
   response models before proposing this, not assumed), and Screen 3's
   entire purpose is a real normal-vs-attacked customer comparison — there
   was no honest way to build it from the original six endpoints.
+- `POST /api/v1/arena/multi-family-run` — harvest hard negatives from ALL 5
+  attack families into one combined retrain, then report each family's
+  evasion rate against the resulting single model (query/body param
+  `n_instances`, default 500 — a reduced-scale run; override up to 2000 for
+  the full official run). **Approved exception** to "no additional
+  endpoints" (Cross-Family Generalization Matrix planning turn, post-Day
+  8b): none of the existing seven endpoints can harvest across multiple
+  families into one combined retrain — `/arena/run` only ever handles a
+  single `genome_id`. Same precedent as `/payment-twin`.
 
 No additional endpoints without approval. Endpoint handlers call existing
 service-layer functions — never reimplement business logic in the route layer.

@@ -21,6 +21,70 @@ function familyLabel(family: string): string {
   return KNOWN_ATTACK_GENOMES.find((g) => g.family === family)?.label ?? family;
 }
 
+// --- Cross-Family Generalization Matrix (post-Day 8b differentiator) ------
+//
+// /arena/multi-family-run is a brand-new endpoint with no lib/api.ts client
+// function -- api.ts isn't in this phase's ALLOWED_TO_TOUCH (only this new
+// section of ArenaView.tsx is), so the fetch is self-contained here, same
+// pattern ShapModal.tsx/RedTeamControls.tsx used for locally-typed response
+// shapes when api.ts couldn't be touched.
+
+const MATRIX_API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000/api/v1";
+
+interface FamilyMatrixResult {
+  genome_id: string;
+  initial_evasion_rate: number;
+  final_evasion_rate: number;
+  robustness_gain: number;
+  hard_examples_count: number;
+}
+
+interface MultiFamilyRunResponse {
+  per_family: Record<string, FamilyMatrixResult>;
+  total_hard_examples_count: number;
+  retrained_precision: number;
+  retrained_recall: number;
+  retrained_f1: number;
+  retrained_fpr: number;
+}
+
+async function fetchMultiFamilyRun(nInstances?: number): Promise<MultiFamilyRunResponse> {
+  const url = `${MATRIX_API_BASE_URL}/arena/multi-family-run`;
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(nInstances !== undefined ? { n_instances: nInstances } : {}),
+    });
+  } catch {
+    throw new ApiError(`Could not reach backend at ${url} -- is the server running?`);
+  }
+  if (!response.ok) {
+    let detail = response.statusText;
+    try {
+      const errorBody = await response.json();
+      if (errorBody?.detail) detail = errorBody.detail;
+    } catch {
+      // response body wasn't JSON -- fall back to statusText
+    }
+    throw new ApiError(`POST /arena/multi-family-run returned ${response.status}: ${detail}`, response.status);
+  }
+  return (await response.json()) as MultiFamilyRunResponse;
+}
+
+/** Evasion rate (0-1) -> a red(high)/green(low) heatmap color, reusing the
+ * existing neon-red/neon-green tokens via color-mix (same technique already
+ * used in BlueTeamSOC.tsx), not new hardcoded hex values.
+ */
+function evasionHeatColor(rate: number): string {
+  const pct = Math.round(Math.min(Math.max(rate, 0), 1) * 100);
+  return `color-mix(in oklch, var(--neon-red) ${pct}%, var(--neon-green))`;
+}
+
+const QUICK_N_INSTANCES = 500;
+const OFFICIAL_MATRIX_N_INSTANCES = 2000;
+
 /**
  * Builds the two-point "Before Hardening" / "After Hardening" chart data.
  * This is a 2-point comparison BY CONSTRUCTION -- /arena/run returns exactly
@@ -75,6 +139,40 @@ export function ArenaView() {
   const [error, setError] = useState<string | null>(null);
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const [matrixResult, setMatrixResult] = useState<MultiFamilyRunResponse | null>(null);
+  const [isMatrixRunning, setIsMatrixRunning] = useState(false);
+  const [matrixElapsedSeconds, setMatrixElapsedSeconds] = useState(0);
+  const [matrixError, setMatrixError] = useState<string | null>(null);
+  const [useOfficialMatrixScale, setUseOfficialMatrixScale] = useState(false);
+  const matrixTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (matrixTimerRef.current) clearInterval(matrixTimerRef.current);
+    };
+  }, []);
+
+  async function handleRunMatrix() {
+    setIsMatrixRunning(true);
+    setMatrixElapsedSeconds(0);
+    setMatrixError(null);
+
+    matrixTimerRef.current = setInterval(() => {
+      setMatrixElapsedSeconds((s) => s + 1);
+    }, 1000);
+
+    try {
+      const nInstances = useOfficialMatrixScale ? OFFICIAL_MATRIX_N_INSTANCES : QUICK_N_INSTANCES;
+      const response = await fetchMultiFamilyRun(nInstances);
+      setMatrixResult(response);
+    } catch (err) {
+      setMatrixError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      if (matrixTimerRef.current) clearInterval(matrixTimerRef.current);
+      setIsMatrixRunning(false);
+    }
+  }
 
   useEffect(() => {
     fetchMetrics()
@@ -275,6 +373,152 @@ export function ArenaView() {
             </Card>
           </>
         )}
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Cross-Family Generalization Matrix</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              M0 was trained only on micro_structuring. Harvests hard negatives from ALL
+              5 families into one combined retrain (M-multi), then measures each family&apos;s
+              evasion rate against that single model &mdash; not five independent retrains.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={useOfficialMatrixScale}
+                  disabled={isMatrixRunning}
+                  onChange={(e) => setUseOfficialMatrixScale(e.target.checked)}
+                  className="accent-primary"
+                />
+                Use official scale (n=2,000, ~8&ndash;10 min) instead of the quick run
+              </label>
+              <Button onClick={handleRunMatrix} disabled={isMatrixRunning} variant="secondary">
+                {isMatrixRunning
+                  ? `Running... (${matrixElapsedSeconds}s elapsed)`
+                  : useOfficialMatrixScale
+                    ? "Run Cross-Family Hardening (official, n=2,000)"
+                    : `Run Cross-Family Hardening (quick, n=${QUICK_N_INSTANCES})`}
+              </Button>
+            </div>
+            {!useOfficialMatrixScale && !isMatrixRunning && (
+              <p className="text-xs" style={{ color: "var(--status-sandbox)" }}>
+                QUICK TEST MODE &mdash; n={QUICK_N_INSTANCES}, a real reduced-scale run
+                (~2 min), not the official n=2,000 methodology (~8&ndash;10 min).
+              </p>
+            )}
+            {isMatrixRunning && (
+              <div className="space-y-1">
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                  <div className="h-full w-1/3 animate-pulse bg-secondary-foreground/40" />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Harvests hard negatives from all 5 families, one combined retrain, then
+                  re-tests each family &mdash; a single blocking call, elapsed-time indicator
+                  only, same honesty pattern as the run above.
+                </p>
+              </div>
+            )}
+
+            {matrixError && (
+              <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+                {matrixError}
+              </div>
+            )}
+
+            {!matrixResult && !isMatrixRunning && !matrixError && (
+              <p className="border-l-2 border-dashed border-muted-foreground/50 pl-3 text-sm text-muted-foreground">
+                Run Cross-Family Hardening to compute
+              </p>
+            )}
+
+            {matrixResult && !isMatrixRunning && (
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                        <th className="py-1.5 pr-4 font-medium">Attack family</th>
+                        <th className="py-1.5 pr-4 font-medium">
+                          M0 evasion (single-family baseline)
+                        </th>
+                        <th className="py-1.5 pr-4 font-medium">M-multi evasion (this run)</th>
+                        <th className="py-1.5 font-medium">Robustness gain</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(matrixResult.per_family).map(([family, data]) => (
+                        <tr key={family} className="border-b border-border/50">
+                          <td className="py-1.5 pr-4">{familyLabel(family)}</td>
+                          <td
+                            className="py-1.5 pr-4 font-semibold tabular-nums"
+                            style={{ color: evasionHeatColor(data.initial_evasion_rate) }}
+                          >
+                            {formatPercent(data.initial_evasion_rate)}
+                          </td>
+                          <td
+                            className="py-1.5 pr-4 font-semibold tabular-nums"
+                            style={{ color: evasionHeatColor(data.final_evasion_rate) }}
+                          >
+                            {formatPercent(data.final_evasion_rate)}
+                          </td>
+                          <td
+                            className="py-1.5 tabular-nums"
+                            style={{
+                              color:
+                                data.robustness_gain > 0
+                                  ? "var(--neon-green)"
+                                  : data.robustness_gain < 0
+                                    ? "var(--neon-red)"
+                                    : undefined,
+                            }}
+                          >
+                            {data.robustness_gain > 0 ? "+" : ""}
+                            {data.robustness_gain.toFixed(2)}%
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  A negative robustness gain means evasion went up for that family under
+                  M-multi, not down &mdash; reported as measured, not hidden.
+                </p>
+
+                <dl className="grid grid-cols-2 gap-x-4 gap-y-2 border-t border-border pt-3 text-xs sm:grid-cols-5">
+                  <div>
+                    <dt className="text-muted-foreground">Total hard examples</dt>
+                    <dd className="tabular-nums">{matrixResult.total_hard_examples_count.toLocaleString()}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">M-multi precision</dt>
+                    <dd className="tabular-nums">{formatPercent(matrixResult.retrained_precision)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">M-multi recall</dt>
+                    <dd className="tabular-nums">{formatPercent(matrixResult.retrained_recall)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">M-multi F1</dt>
+                    <dd className="tabular-nums">{formatPercent(matrixResult.retrained_f1)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">M-multi FPR</dt>
+                    <dd className="tabular-nums">{formatPercent(matrixResult.retrained_fpr)}</dd>
+                  </div>
+                </dl>
+                <p className="text-xs text-muted-foreground">
+                  Precision/recall/F1/FPR above are M-multi&apos;s real performance on Day 4&apos;s
+                  original held-out test set &mdash; shown alongside the evasion-rate gains so
+                  any cost to general performance isn&apos;t hidden.
+                </p>
+              </>
+            )}
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

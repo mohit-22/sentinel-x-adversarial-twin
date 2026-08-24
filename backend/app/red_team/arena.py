@@ -765,3 +765,99 @@ def run_arena_for_all_families(
         )
         for genome in genomes
     }
+
+
+def run_multi_family_hardening(
+    genomes: List[Dict],
+    model,
+    train_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    customers: pd.DataFrame,
+    clean_history: pd.DataFrame,
+    merchants: pd.DataFrame,
+    graph_features: Dict,
+    feature_columns: List[str] = FEATURE_COLUMNS,
+    n_instances: int = 500,
+    seed: int = 42,
+) -> Dict:
+    """Cross-Family Generalization Matrix (post-Day 8b differentiator).
+
+    Unlike run_arena_for_all_families (each family gets its OWN independent
+    M1), this harvests hard negatives from ALL given genomes, combines them
+    into ONE retrain, then re-tests each family independently against the
+    single resulting multi-family-hardened model (M-multi) -- turning the
+    Day 6.5 finding (M0, trained only on micro_structuring, evades 89-98%
+    on the other four families) into a measured before/after.
+
+    Reuses run_attack / harvest_hard_negatives / retrain / re_test /
+    compute_arg exactly as they exist -- no changes to any of them, only
+    new orchestration over multiple genomes with one shared retrain in the
+    middle. Same category of addition as run_arena_for_all_families itself
+    (Day 6.5): every other function in this file is untouched.
+
+    n_instances defaults to 500, not the official 2000: harvesting cost
+    scales with evaded-instance count, and 4 of the 5 families evade
+    89-98% of a 2000-instance batch (measured at the planning turn) --
+    harvesting all 5 families at n=2000 costs roughly 8-10 minutes. 500 is
+    a real, non-cherry-picked, reduced-scale run (~2 minutes); n_instances
+    remains overridable up to 2000 for the full official run.
+    """
+    per_family_attack: Dict[str, Dict] = {}
+    all_hard_negatives: List[pd.DataFrame] = []
+
+    for genome in genomes:
+        attack = run_attack(
+            genome, model, customers, clean_history, merchants, graph_features,
+            feature_columns, n_instances, seed,
+        )
+        harvest = harvest_hard_negatives(
+            attack["evaded_rows"], attack["attacks_raw"], customers, clean_history,
+            merchants, graph_features, genome, seed,
+        )
+        per_family_attack[genome["family"]] = {"attack": attack, "harvest": harvest}
+        all_hard_negatives.append(harvest["hard_negatives"])
+
+    combined_hard_negatives = pd.concat(all_hard_negatives, ignore_index=True)
+    model_multi = retrain(train_df, combined_hard_negatives, feature_columns)
+
+    per_family_result: Dict[str, Dict] = {}
+    for genome in genomes:
+        family = genome["family"]
+        attack = per_family_attack[family]["attack"]
+        harvest = per_family_attack[family]["harvest"]
+        retraining_transaction_ids = set(harvest["hard_negatives"]["transaction_id"])
+
+        final = re_test(
+            genome, model_multi, customers, clean_history, merchants, graph_features,
+            customer_ids=attack["customer_ids_used"], exclude_transaction_ids=retraining_transaction_ids,
+            mutation_name=None, feature_columns=feature_columns, seed=seed + 1000,
+        )
+        per_family_result[family] = {
+            "genome_id": genome["genome_id"],
+            "initial_evasion_rate": attack["evasion_rate"],
+            "final_evasion_rate": final["evasion_rate"],
+            "robustness_gain": compute_arg(attack["evasion_rate"], final["evasion_rate"]),
+            "hard_examples_count": harvest["accepted_count"],
+        }
+
+    return {
+        "model": model_multi,
+        "per_family": per_family_result,
+        # Sum of each family's accepted_count (validated fraud rows only),
+        # NOT len(combined_hard_negatives) -- harvest_hard_negatives also
+        # folds in non-fraud "legitimate camouflage" rows for certain
+        # mutations (e.g. add_legitimate_micro_purchases) without counting
+        # them in accepted_count (existing, correct behavior -- see its own
+        # docstring). Using len() here would silently disagree with the sum
+        # of the per-family hard_examples_count values shown right next to
+        # it, which use the same accepted_count convention as
+        # run_arena_mvp_gate's existing hard_examples_count field. Caught by
+        # test_run_multi_family_hardening_total_hard_examples_is_sum_across_
+        # families before this was ever displayed anywhere.
+        "total_hard_examples_count": sum(data["hard_examples_count"] for data in per_family_result.values()),
+        # M-multi's precision/recall/F1/FPR on Day 4's ORIGINAL held-out
+        # test set -- confirms (or reveals a cost to) whether multi-family
+        # hardening regresses general performance, same check
+        # run_arena_mvp_gate already runs for the single-family case.
+        "retrained_metrics": evaluate_detector(model_multi, test_df, feature_columns),
+    }

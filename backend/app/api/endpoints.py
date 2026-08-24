@@ -28,7 +28,12 @@ from app.blue_team.features import combine_clean_and_injected, engineer_features
 from app.blue_team.graph_engine import apply_graph_features
 from app.core.config import N_CUSTOMERS, N_MERCHANTS, N_TRANSACTIONS, SEED, SIMULATION_DAYS
 from app.core.schemas import ArenaRunSummary, CustomerProfile, DetectionResult, InjectedTransaction, TransactionBase
-from app.red_team.arena import embed_and_engineer, generate_matched_population_attacks, run_arena_mvp_gate
+from app.red_team.arena import (
+    embed_and_engineer,
+    generate_matched_population_attacks,
+    run_arena_mvp_gate,
+    run_multi_family_hardening,
+)
 from app.red_team.attack_genomes import (
     BEHAVIORAL_CAMOUFLAGE_GENOME,
     MICRO_STRUCTURING_GENOME,
@@ -467,4 +472,93 @@ def payment_twin(customer_id: str, attack_family: str = "micro_structuring") -> 
         customer=validate_customers(customer_rows)[0],
         normal_transactions=validate_transactions(normal_rows),
         counterfactual_transactions=validate_injected_transactions(counterfactual_raw),
+    )
+
+
+# --- 8. POST /arena/multi-family-run -- APPROVED EXCEPTION to §7's -----------
+# "exactly six endpoints, no more" rule (Cross-Family Generalization Matrix
+# planning turn, post-Day 8b). Same precedent as /payment-twin (Day 7
+# Screen 3): none of the existing seven endpoints can harvest hard
+# negatives from all 5 families into one combined retrain -- /arena/run
+# only ever handles a single genome_id. CLAUDE.md §7 updated to document
+# this exception.
+#
+# Reuses run_multi_family_hardening (arena.py) exclusively -- no new
+# business logic here, matching the same rule that governs every other
+# route.
+
+
+class MultiFamilyRunRequest(BaseModel):
+    # None -> run_multi_family_hardening's own default (500, a reduced-
+    # scale run -- ~2 min) applies. Explicit override lets a caller
+    # request the full official n=2000 (~8-10 min), knowingly trading
+    # speed for the documented standard.
+    n_instances: Optional[int] = None
+
+
+class FamilyResult(BaseModel):
+    genome_id: str
+    initial_evasion_rate: float
+    final_evasion_rate: float
+    robustness_gain: float
+    hard_examples_count: int
+
+
+class MultiFamilyRunResponse(BaseModel):
+    per_family: Dict[str, FamilyResult]
+    total_hard_examples_count: int
+    # M-multi's precision/recall/F1/FPR on Day 4's ORIGINAL held-out test
+    # set -- reported alongside the evasion-rate improvement so a cost to
+    # general performance (if any) isn't hidden, same discipline as
+    # retrain's own documented single-family precision/recall trade-off.
+    retrained_precision: float
+    retrained_recall: float
+    retrained_f1: float
+    retrained_fpr: float
+
+
+_ALL_GENOMES = [
+    MICRO_STRUCTURING_GENOME,
+    SYNTHETIC_IDENTITY_DRIFT_GENOME,
+    BEHAVIORAL_CAMOUFLAGE_GENOME,
+    SOCIAL_ENGINEERING_COERCION_GENOME,
+    SYNTHETIC_VOICE_AUTHORIZATION_GENOME,
+]
+
+
+@router.post("/arena/multi-family-run", response_model=MultiFamilyRunResponse)
+def multi_family_run(request: MultiFamilyRunRequest = MultiFamilyRunRequest()) -> MultiFamilyRunResponse:
+    """Harvest hard negatives from ALL 5 attack families into one combined
+    retrain (run_multi_family_hardening), then report each family's
+    evasion rate against the resulting single model (M-multi) -- the
+    Cross-Family Generalization Matrix's backing data.
+    """
+    state = _get_state()
+
+    kwargs = {}
+    if request.n_instances is not None:
+        kwargs["n_instances"] = request.n_instances
+
+    result = run_multi_family_hardening(
+        _ALL_GENOMES,
+        state["model"],
+        state["train_df"],
+        state["test_df"],
+        state["customers"],
+        state["clean_history"],
+        state["merchants"],
+        state["graph_features"],
+        feature_columns=FEATURE_COLUMNS,
+        seed=SEED,
+        **kwargs,
+    )
+
+    metrics = result["retrained_metrics"]
+    return MultiFamilyRunResponse(
+        per_family={family: FamilyResult(**data) for family, data in result["per_family"].items()},
+        total_hard_examples_count=result["total_hard_examples_count"],
+        retrained_precision=metrics["precision"],
+        retrained_recall=metrics["recall"],
+        retrained_f1=metrics["f1"],
+        retrained_fpr=metrics["fpr"],
     )

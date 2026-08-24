@@ -330,3 +330,73 @@ def test_run_arena_mvp_gate_harvest_reports_accept_reject_counts(small_arena_run
     assert diagnostics["harvest_accepted_count"] >= 0
     assert diagnostics["harvest_rejected_count"] >= 0
     assert diagnostics["harvest_accepted_count"] == small_arena_run["hard_examples_count"]
+
+
+# ============================================================================
+# Cross-Family Generalization Matrix -- run_multi_family_hardening
+# (post-Day 8b differentiator). Reuses run_attack/harvest_hard_negatives/
+# retrain/re_test unchanged -- these tests cover only the new orchestration.
+# ============================================================================
+
+
+@pytest.fixture(scope="module")
+def multi_family_result():
+    from app.red_team.arena import run_multi_family_hardening
+
+    merchants = generate_merchants(N_MERCHANTS, seed=SEED)
+    customers = generate_customer_profiles(N_CUSTOMERS, merchants, seed=SEED)
+    clean = generate_transaction_base(customers, merchants, N_TRANSACTIONS, SIMULATION_DAYS, seed=SEED)
+    attacks = generate_micro_structuring_attacks(
+        MICRO_STRUCTURING_GENOME, customers, merchants, n_instances=500, seed=SEED
+    )
+    combined = combine_clean_and_injected(clean, attacks)
+    featured = engineer_features(combined, customers)
+    day4_result = run_blue_team_pipeline(featured, seed=SEED)
+
+    return run_multi_family_hardening(
+        ALL_GENOMES,
+        day4_result["model"],
+        day4_result["train_df"],
+        day4_result["test_df"],
+        customers,
+        clean,
+        merchants,
+        day4_result["graph_features"],
+        feature_columns=FEATURE_COLUMNS,
+        n_instances=30,  # small scale for test speed -- full n=500 verified manually
+        seed=SEED,
+    )
+
+
+def test_run_multi_family_hardening_covers_all_five_families(multi_family_result):
+    assert set(multi_family_result["per_family"].keys()) == {g["family"] for g in ALL_GENOMES}
+
+
+def test_run_multi_family_hardening_per_family_result_shape(multi_family_result):
+    for family, data in multi_family_result["per_family"].items():
+        for key in ("genome_id", "initial_evasion_rate", "final_evasion_rate", "robustness_gain", "hard_examples_count"):
+            assert key in data, f"{family} missing {key}"
+        assert 0.0 <= data["initial_evasion_rate"] <= 1.0
+        assert 0.0 <= data["final_evasion_rate"] <= 1.0
+        assert np.isfinite(data["robustness_gain"])
+        assert data["hard_examples_count"] >= 0
+
+
+def test_run_multi_family_hardening_returns_one_shared_model(multi_family_result):
+    """All 5 families are re-tested against the SAME model object -- unlike
+    run_arena_for_all_families, which trains an independent M1 per family.
+    """
+    assert "model" in multi_family_result
+    assert multi_family_result["model"] is not None
+
+
+def test_run_multi_family_hardening_total_hard_examples_is_sum_across_families(multi_family_result):
+    per_family_sum = sum(d["hard_examples_count"] for d in multi_family_result["per_family"].values())
+    assert multi_family_result["total_hard_examples_count"] == per_family_sum
+
+
+def test_run_multi_family_hardening_reports_retrained_metrics_on_original_test_set(multi_family_result):
+    metrics = multi_family_result["retrained_metrics"]
+    for key in ("precision", "recall", "f1", "pr_auc", "fpr"):
+        assert key in metrics
+        assert 0.0 <= metrics[key] <= 1.0
