@@ -542,6 +542,46 @@ export async function resetJudgeScenario(scenarioId: string): Promise<void> {
   if (!response.ok) throw new ApiError(`Failed to reset scenario: ${response.status}`);
 }
 
+/** Mirrors backend/app/blue_team/soc_agent.py's AgentVerdict exactly. */
+export interface AgentVerdict {
+  transaction_id: string;
+  hypothesis: string;
+  attack_family_suspected: string;
+  confidence_score: number;
+  evidence: string[];
+  recommended_action: string;
+  reasoning_chain: string;
+  audit_log_entry: string;
+  similar_past_attacks: number;
+}
+
+/**
+ * POST /api/v1/soc/investigate/{transaction_id} -- Autonomous SOC Agent:
+ * real SHAP evidence + immune memory context, narrated into a structured
+ * verdict by an LLM (Groq). Same cached-dataset scope as /explain -- a 404
+ * means this transaction isn't in M0's cached train/test set.
+ */
+export async function investigateTransaction(transactionId: string): Promise<AgentVerdict> {
+  let response: Response;
+  const url = `${API_BASE_URL}/soc/investigate/${encodeURIComponent(transactionId)}`;
+  try {
+    response = await fetch(url, { method: "POST" });
+  } catch {
+    throw new ApiError(`Could not reach backend at ${url} -- is the server running?`);
+  }
+  if (!response.ok) {
+    let detail = response.statusText;
+    try {
+      const errorBody = await response.json();
+      if (errorBody?.detail) detail = errorBody.detail;
+    } catch {
+      // response body wasn't JSON -- fall back to statusText
+    }
+    throw new ApiError(`POST /soc/investigate/${transactionId} returned ${response.status}: ${detail}`, response.status);
+  }
+  return (await response.json()) as AgentVerdict;
+}
+
 export async function approveJudgeScenario(scenarioId: string): Promise<void> {
   const response = await fetch(`${API_BASE_URL}/judge/scenario/${scenarioId}/approve`, { method: "POST" });
   if (!response.ok) {
