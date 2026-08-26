@@ -105,3 +105,69 @@ def test_same_run_produces_deterministic_metrics():
     
     assert impact1 == impact2
     assert run1 == run2
+
+def test_lineage_no_run():
+    endpoints.initialize_app_state(seed=42)
+    response = client.get("/api/v1/observatory/lineage")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "no_run"
+    assert data["trajectory"] == []
+
+def test_lineage_after_run_structure():
+    endpoints.initialize_app_state(seed=42)
+    run_response = client.post("/api/v1/arena/adaptive", json={"genome_id": MICRO_STRUCTURING_GENOME["genome_id"], "population_size": 2, "generations": 2, "n_instances": 5})
+    assert run_response.status_code == 200
+    
+    response = client.get("/api/v1/observatory/lineage")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "ok"
+    assert len(data["trajectory"]) > 0
+    assert data["run_id"] is not None
+    
+    # Ensure lineage exists in internal state
+    assert endpoints._LATEST_ADAPTIVE_RUN["lineage"] is not None
+    lineage = endpoints._LATEST_ADAPTIVE_RUN["lineage"]
+    
+    best_count = 0
+    elite_count = 0
+    parent_tracked_found = False
+    
+    # Root self-reference should not count as missing
+    genome_ids = {n["genome"]["genome_id"] for n in lineage}
+    
+    for node in lineage:
+        parent_id = node["parent_attack_id"]
+        genome_id = node["genome"]["genome_id"]
+        
+        # Test C and D: Every non-root has valid parent, no parent_id_tracked
+        if parent_id and "parent_id_tracked" in str(parent_id):
+            parent_tracked_found = True
+            
+        if parent_id is not None and parent_id != genome_id:
+            assert parent_id in genome_ids
+            
+        if node.get("is_best"):
+            best_count += 1
+            
+        if node.get("is_elite"):
+            elite_count += 1
+
+    assert not parent_tracked_found, "parent_id_tracked found in lineage"
+    assert best_count >= 1, "There should be at least one is_best node"
+    assert elite_count > 0, "There should be some elite nodes"
+    
+def test_lineage_deterministic_seed():
+    endpoints.initialize_app_state(seed=42)
+    client.post("/api/v1/arena/adaptive", json={"genome_id": MICRO_STRUCTURING_GENOME["genome_id"], "population_size": 2, "generations": 2, "n_instances": 5})
+    lineage1 = client.get("/api/v1/observatory/lineage").json()["trajectory"]
+    
+    # Clear and rerun with same seed
+    endpoints._APP_STATE.clear()
+    endpoints._LATEST_ADAPTIVE_RUN = None
+    endpoints.initialize_app_state(seed=42)
+    client.post("/api/v1/arena/adaptive", json={"genome_id": MICRO_STRUCTURING_GENOME["genome_id"], "population_size": 2, "generations": 2, "n_instances": 5})
+    lineage2 = client.get("/api/v1/observatory/lineage").json()["trajectory"]
+    
+    assert lineage1 == lineage2
