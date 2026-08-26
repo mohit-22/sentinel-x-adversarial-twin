@@ -1044,6 +1044,30 @@ def api_observatory_export(req: ObservatoryExportRequest):
         }],
     }
 
+from app.blue_team.soc_agent import run_soc_agent, AgentVerdict
+
+@router.post("/soc/investigate/{transaction_id}", response_model=AgentVerdict)
+def soc_investigate(transaction_id: str) -> AgentVerdict:
+    """Autonomous SOC Agent: investigates a flagged transaction using SHAP
+    analysis + immune memory + LLM reasoning. Returns structured verdict
+    with evidence and audit log."""
+    state = _get_state()
+
+    try:
+        verdict = run_soc_agent(
+            transaction_id=transaction_id,
+            model=state["model"],
+            train_df=state["train_df"],
+            test_df=state["test_df"],
+            immune_memory=_IMMUNE_MEMORY,
+        )
+        return verdict
+    except ValueError as e:
+        raise HTTPException(
+            status_code=404,
+            detail=str(e) + " -- SOC Agent only covers M0's cached dataset.",
+        )
+
 # --- STEP 7: JUDGE MODE API ---
 from app.judge.schemas import JudgeScenario
 from app.judge.scenario_runner import ScenarioOrchestrator

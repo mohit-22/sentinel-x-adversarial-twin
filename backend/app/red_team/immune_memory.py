@@ -50,3 +50,7 @@ class ImmuneMemoryStore:
             self.records[memory_id].residual_evasion = residual_evasion
             self.records[memory_id].defense_version = defense_version
             self.records[memory_id].last_seen = time.time()
+
+    def get_by_family(self, family: str, limit: int = 3) -> List[MemoryRecord]:
+        return [r for r in self.records.values()
+                if r.attack_family == family][:limit]
