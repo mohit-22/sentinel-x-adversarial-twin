@@ -323,3 +323,230 @@ export async function explainTransaction(transactionId: string): Promise<unknown
   }
   return response.json();
 }
+
+/** Mirror of backend DefensePolicy */
+export interface DefensePolicy {
+  policy_id: string;
+  version: number;
+  source_attack_id: string;
+  source_attack_family: string;
+  root_cause: string;
+  policy_type: string;
+  conditions: Record<string, unknown>;
+  action: string;
+  severity: string;
+  confidence: number;
+  created_at: number;
+  status: string;
+  provenance: string;
+}
+
+export interface AttackFailureAnalysis {
+  attack_id: string;
+  attack_family: string;
+  baseline_evasion: number;
+  dominant_failure_features: string[];
+  feature_value_before: Record<string, number>;
+  feature_value_after: Record<string, number>;
+  feature_deviation: Record<string, number>;
+  temporal_pattern: Record<string, unknown>;
+  graph_pattern: Record<string, unknown>;
+  novelty_pattern: Record<string, unknown>;
+  suspected_blind_spot: string;
+  evidence: string;
+}
+
+export interface PolicySimulationResult {
+  utility: number;
+  evasion_before: number;
+  evasion_after: number;
+  fpr_increase_pct: number;
+  fraud_loss_prevented: number;
+  false_positive_increase: number;
+}
+
+export async function analyzeAttack(baseGenomeId: string, evolvedGenomeId: string): Promise<AttackFailureAnalysis> {
+  const response = await fetch(`${API_BASE_URL}/defense/analyze-attack`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ base_genome_id: baseGenomeId, evolved_genome_id: evolvedGenomeId }),
+  });
+  if (!response.ok) throw new ApiError(`Analyze failed: ${response.status}`);
+  return response.json() as Promise<AttackFailureAnalysis>;
+}
+
+export async function compileDefense(analysis: AttackFailureAnalysis): Promise<{ policies: DefensePolicy[] }> {
+  const response = await fetch(`${API_BASE_URL}/defense/compile`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(analysis),
+  });
+  if (!response.ok) throw new ApiError(`Compile failed: ${response.status}`);
+  return response.json() as Promise<{ policies: DefensePolicy[] }>;
+}
+
+export async function simulateDefense(policy: DefensePolicy): Promise<PolicySimulationResult> {
+  const response = await fetch(`${API_BASE_URL}/defense/simulate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ policy }),
+  });
+  if (!response.ok) throw new ApiError(`Simulate failed: ${response.status}`);
+  return response.json() as Promise<PolicySimulationResult>;
+}
+
+export async function approvePolicy(policyId: string, action: "APPROVE" | "REJECT"): Promise<{ status: string, new_status: string }> {
+  const response = await fetch(`${API_BASE_URL}/defense/approve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ policy_id: policyId, action }),
+  });
+  if (!response.ok) {
+    if (response.status === 501) {
+      const err = await response.json().catch(() => ({}));
+      throw new ApiError(err.detail || "Not Implemented", 501);
+    }
+    throw new ApiError(`Approve failed: ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function fetchPolicies(): Promise<{ policies: DefensePolicy[] }> {
+  const response = await fetch(`${API_BASE_URL}/defense/policies`, { cache: "no-store" });
+  if (!response.ok) throw new ApiError(`Fetch policies failed: ${response.status}`);
+  return response.json() as Promise<{ policies: DefensePolicy[] }>;
+}
+
+export interface ImmuneMemoryRecord {
+  memory_id: string;
+  attack_family: string;
+  genome_id: string;
+  genome: any;
+  parent_attack_id: string;
+  generation: number;
+  initial_evasion: number;
+  best_evasion: number;
+  defense_version: string;
+  current_status: string;
+  residual_evasion: number;
+  novelty_score: number;
+  realism_score: number;
+  provenance: string;
+}
+
+export async function fetchImmuneMemory(): Promise<{ records: ImmuneMemoryRecord[] }> {
+  const response = await fetch(`${API_BASE_URL}/immune-memory`, { cache: "no-store" });
+  if (!response.ok) throw new ApiError(`Fetch immune memory failed: ${response.status}`);
+  return response.json() as Promise<{ records: ImmuneMemoryRecord[] }>;
+}
+
+export async function fetchRadar(): Promise<any> {
+  const response = await fetch(`${API_BASE_URL}/defense/radar`, { cache: "no-store" });
+  if (!response.ok) throw new ApiError(`Radar fetch failed: ${response.status}`);
+  return response.json();
+}
+
+export async function fetchEvolution(): Promise<any> {
+  const response = await fetch(`${API_BASE_URL}/defense/evolution`, { cache: "no-store" });
+  if (response.status === 501) return null;
+  if (!response.ok) throw new ApiError(`Evolution fetch failed: ${response.status}`);
+  return response.json();
+}
+
+export interface JudgeScenario {
+  scenario_id: string;
+  seed: number;
+  attack_family: string;
+  attack_scale: number;
+  difficulty: "EASY" | "HARD" | "UNKNOWN" | "EXTREME";
+  adaptive_red_team_enabled: boolean;
+  zero_day_radar_enabled: boolean;
+  defense_compiler_enabled: boolean;
+  human_approval_required: boolean;
+  evolution_generations: number;
+}
+
+export interface Scorecard {
+  attack_family: string;
+  initial_evasion: number;
+  best_evolved_evasion: number;
+  attack_generations: number;
+  attack_diversity: number;
+  precision: number;
+  recall: number;
+  f1: number;
+  fpr: number;
+  unknown_detection_rate: number;
+  false_unknown_rate: number;
+  cluster_count: number;
+  policy_generated: string;
+  policy_status: string;
+  evasion_before: number;
+  evasion_after: number;
+  evasion_reduction: number;
+  clean_fpr_delta: number;
+  legitimate_block_rate: number;
+  customer_friction_proxy: number;
+  customer_leakage: number;
+  row_leakage: number;
+  reproducibility: boolean;
+  total_runtime: number;
+  attack_generation_runtime: number;
+  detection_runtime: number;
+  policy_simulation_runtime: number;
+  defense_readiness_score: number;
+}
+
+export interface ScenarioState {
+  scenario: JudgeScenario;
+  current_phase: string;
+  is_running: boolean;
+  is_completed: boolean;
+  scorecard: Scorecard | null;
+  baseline_evasion: number;
+  evolved_evasion: number;
+  latest_genome_id: string | null;
+  radar_novelty: number;
+  radar_clusters: number;
+  failure_cause: string | null;
+  candidate_policy_id: string | null;
+  policy_status: string;
+  simulated_evasion_after: number;
+}
+
+export async function createJudgeScenario(scenario: JudgeScenario): Promise<ScenarioState> {
+  const response = await fetch(`${API_BASE_URL}/judge/scenario`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(scenario),
+  });
+  if (!response.ok) throw new ApiError(`Failed to create scenario: ${response.status}`);
+  return response.json();
+}
+
+export async function runJudgeScenario(scenarioId: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/judge/scenario/${scenarioId}/run`, { method: "POST" });
+  if (!response.ok) throw new ApiError(`Failed to run scenario: ${response.status}`);
+}
+
+export async function getJudgeScenario(scenarioId: string): Promise<ScenarioState> {
+  const response = await fetch(`${API_BASE_URL}/judge/scenario/${scenarioId}`, { cache: "no-store" });
+  if (!response.ok) throw new ApiError(`Failed to fetch scenario: ${response.status}`);
+  return response.json();
+}
+
+export async function resetJudgeScenario(scenarioId: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/judge/scenario/${scenarioId}/reset`, { method: "POST" });
+  if (!response.ok) throw new ApiError(`Failed to reset scenario: ${response.status}`);
+}
+
+export async function approveJudgeScenario(scenarioId: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/judge/scenario/${scenarioId}/approve`, { method: "POST" });
+  if (!response.ok) {
+    if (response.status === 501) {
+      const err = await response.json().catch(() => ({}));
+      throw new ApiError(err.detail || "Not Implemented", 501);
+    }
+    throw new ApiError(`Failed to approve scenario: ${response.status}`);
+  }
+}

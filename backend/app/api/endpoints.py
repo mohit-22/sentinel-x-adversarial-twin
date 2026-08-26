@@ -57,6 +57,13 @@ from app.simulator.clean_generator import (
     validate_transactions,
 )
 from app.simulator.fidelity import compute_fidelity_report
+from app.blue_team.zero_day import (
+    train_novelty_detector, 
+    compute_novelty_score, 
+    find_novelty_threshold, 
+    cluster_unknowns, 
+    generate_cluster_report
+)
 
 router = APIRouter()
 
@@ -84,13 +91,24 @@ _GENOME_REGISTRY: Dict[str, Dict] = {
     )
 }
 
+from app.red_team.immune_memory import ImmuneMemoryStore, MemoryRecord
+from app.red_team.adaptive_attack import run_evolutionary_search
+
 _APP_STATE: Dict = {}
+_IMMUNE_MEMORY = ImmuneMemoryStore()
 
 # Most recent /arena/run result, this server lifetime only. Written ONLY as
 # a side effect of an actual /arena/run call -- /metrics never triggers a
 # run itself, and startup never populates this (stays None until the first
 # real arena run happens).
 _LATEST_ARENA_RUN: Optional[ArenaRunSummary] = None
+
+# Most recent /arena/adaptive result's real per-generation lineage, this
+# server lifetime only. Same pattern as _LATEST_ARENA_RUN -- written ONLY
+# as a side effect of an actual /arena/adaptive call, never fabricated.
+# Lets /defense/evolution serve real data once at least one adaptive run
+# has happened, instead of a permanent 501.
+_LATEST_ADAPTIVE_RUN: Optional[Dict] = None
 
 
 def initialize_app_state(seed: int = SEED) -> None:
@@ -109,6 +127,9 @@ def initialize_app_state(seed: int = SEED) -> None:
     featured = engineer_features(combined, customers)
     result = run_blue_team_pipeline(featured, seed=seed)
 
+    radar_state = train_novelty_detector(result["train_df"], seed=seed)
+    radar_threshold = find_novelty_threshold(radar_state, result["train_df"])
+
     _APP_STATE.clear()
     _APP_STATE.update(
         {
@@ -119,6 +140,8 @@ def initialize_app_state(seed: int = SEED) -> None:
             "train_df": result["train_df"],
             "test_df": result["test_df"],
             "graph_features": result["graph_features"],
+            "radar_state": radar_state,
+            "radar_threshold": radar_threshold,
         }
     )
     _LATEST_ARENA_RUN = None  # a fresh startup means no arena run has happened yet this session
@@ -562,3 +585,352 @@ def multi_family_run(request: MultiFamilyRunRequest = MultiFamilyRunRequest()) -
         retrained_f1=metrics["f1"],
         retrained_fpr=metrics["fpr"],
     )
+
+
+# --- 7. POST /zero-day/scan ----------------------------------------------------
+
+
+class ZeroDayScanRequest(BaseModel):
+    transactions: List[TransactionBase]
+
+
+class NoveltyResult(BaseModel):
+    transaction_id: str
+    novelty_score: float
+    is_unknown: bool
+
+
+class UnknownCluster(BaseModel):
+    cluster_id: int
+    transaction_count: int
+    novelty_score_mean: float
+    novelty_score_max: float
+    first_seen_timestamp: str
+    last_seen_timestamp: str
+    feature_means: Dict[str, float]
+    representative_transaction_ids: List[str]
+
+
+class ZeroDayScanResponse(BaseModel):
+    results: List[NoveltyResult]
+    clusters: List[UnknownCluster]
+    aggregate_metrics: Dict[str, float]
+
+
+@router.post("/zero-day/scan", response_model=ZeroDayScanResponse)
+def scan_zero_day(request: ZeroDayScanRequest) -> ZeroDayScanResponse:
+    """Score a batch of transactions with the Zero-Day Radar to identify 
+    novel, unknown behavior that doesn't fit the known distributions.
+    """
+    state = _get_state()
+    customers, clean_history, merchants = state["customers"], state["clean_history"], state["merchants"]
+
+    tx_df = pd.DataFrame([t.model_dump() for t in request.transactions])
+    if tx_df.empty:
+        return ZeroDayScanResponse(results=[], clusters=[], aggregate_metrics={})
+
+    tx_for_embedding = tx_df.copy()
+    tx_for_embedding["is_fraud"] = 0
+    tx_for_embedding["attack_family"] = None
+    tx_for_embedding["genome_id"] = None
+
+    featured = embed_and_engineer(tx_for_embedding, customers, clean_history, merchants)
+    featured = apply_graph_features(featured, state["graph_features"])
+
+    scored = featured.set_index("transaction_id").loc[tx_df["transaction_id"]].reset_index()
+
+    radar_state = state["radar_state"]
+    threshold = state["radar_threshold"]
+
+    novelty_scores = compute_novelty_score(radar_state, scored)
+    scored["novelty_score"] = novelty_scores
+    scored["is_unknown"] = novelty_scores > threshold
+
+    results = [
+        NoveltyResult(
+            transaction_id=tx_id,
+            novelty_score=float(score),
+            is_unknown=bool(is_unk)
+        )
+        for tx_id, score, is_unk in zip(scored["transaction_id"], novelty_scores, scored["is_unknown"])
+    ]
+
+    unknown_df = scored[scored["is_unknown"]].copy()
+    clustered = cluster_unknowns(unknown_df)
+    cluster_reports = generate_cluster_report(clustered)
+
+    clusters = [UnknownCluster(**rep) for rep in cluster_reports]
+
+    aggregate_metrics = {
+        "total_scanned": len(scored),
+        "total_unknown": len(unknown_df),
+        "cluster_count": len(clusters)
+    }
+
+    return ZeroDayScanResponse(results=results, clusters=clusters, aggregate_metrics=aggregate_metrics)
+
+class AdaptiveArenaRequest(BaseModel):
+    genome_id: str
+    population_size: int = 5
+    generations: int = 3
+    elite_count: int = 1
+    mutation_probability: float = 0.5
+    n_instances: int = 50
+
+@router.post("/arena/adaptive")
+def run_adaptive_arena(req: AdaptiveArenaRequest):
+    global _LATEST_ADAPTIVE_RUN
+
+    if not _APP_STATE:
+        raise HTTPException(503, "System initializing")
+
+    base_genome = _GENOME_REGISTRY.get(req.genome_id)
+    if not base_genome:
+        raise HTTPException(404, "Genome not found")
+
+    result = run_evolutionary_search(
+        base_genome=base_genome,
+        model=_APP_STATE["model"],
+        radar_state=_APP_STATE["radar_state"],
+        customers=_APP_STATE["customers"],
+        clean_history=_APP_STATE["clean_history"],
+        merchants=_APP_STATE["merchants"],
+        graph_features=_APP_STATE["graph_features"],
+        population_size=req.population_size,
+        generations=req.generations,
+        elite_count=req.elite_count,
+        mutation_probability=req.mutation_probability,
+        n_instances=req.n_instances
+    )
+
+    # Real per-generation trajectory for /defense/evolution -- one point per
+    # generation, taking the MAX evasion_rate seen in that generation (not
+    # just whichever genome happened to win on composite fitness), so
+    # "Peak Red Team Evasion" reflects the true peak across all generations,
+    # never just the final one.
+    lineage = result["lineage"]
+    generations_seen = sorted({entry["generation"] for entry in lineage})
+    trajectory = []
+    for gen in generations_seen:
+        gen_entries = [e for e in lineage if e["generation"] == gen]
+        peak_entry = max(gen_entries, key=lambda e: e["evasion_rate"])
+        trajectory.append({
+            "generation": gen,
+            "evasion": peak_entry["evasion_rate"],
+            "fitness": peak_entry["total_fitness"],
+        })
+    _LATEST_ADAPTIVE_RUN = {"trajectory": trajectory}
+
+    # Store the best one in Immune Memory
+    best = result["best_attack"]
+    
+    if best["validity_status"] == "VALID" and best["evasion_rate"] > 0.05:
+        # Convert to MemoryRecord
+        mem_rec = MemoryRecord(
+            memory_id=f"MEM-{best['genome']['genome_id']}",
+            attack_family=best['genome']['family'],
+            genome_id=best['genome']['genome_id'],
+            genome=best['genome'],
+            parent_attack_id=best['parent_attack_id'],
+            generation=best['generation'],
+            initial_evasion=best['evasion_rate'],
+            best_evasion=best['evasion_rate'],
+            defense_version="M0",
+            current_status="DISCOVERED",
+            residual_evasion=best['evasion_rate'],
+            novelty_score=best['novelty_score'],
+            realism_score=best['realism_score'],
+            provenance="training"
+        )
+        _IMMUNE_MEMORY.add_record(mem_rec)
+        
+    return {
+        "status": "success",
+        "best_attack": best,
+        "lineage": result["lineage"],
+        "memory_additions": 1 if (best["validity_status"] == "VALID" and best["evasion_rate"] > 0.05) else 0
+    }
+
+@router.get("/immune-memory")
+def get_immune_memory():
+    return {"records": [r.model_dump() for r in _IMMUNE_MEMORY.get_all()]}
+
+from app.blue_team.defense_compiler import AttackFailureAnalysis, DefensePolicy, analyze_attack, compile_policy
+from app.blue_team.policy_simulator import simulate_policy_utility
+
+_ACTIVE_POLICIES = []
+_CANDIDATE_POLICIES: Dict[str, DefensePolicy] = {}
+
+class AnalyzeAttackRequest(BaseModel):
+    base_genome_id: str
+    evolved_genome_id: str
+
+@router.post("/defense/analyze-attack")
+def api_analyze_attack(req: AnalyzeAttackRequest):
+    """analyze_attack() needs real base/evolved attack transaction
+    DataFrames and both genome dicts. base_genome_id resolves via
+    _GENOME_REGISTRY, but evolved_genome_id (e.g. a MUT-* id from
+    /arena/adaptive) has no stored lookup back to its genome or the
+    transactions it generated. Honest 501, not fabricated analysis.
+    """
+    if not _APP_STATE:
+        raise HTTPException(503, "System initializing")
+
+    base = _GENOME_REGISTRY.get(req.base_genome_id)
+    if not base:
+        raise HTTPException(404, "Base genome not found")
+
+    raise HTTPException(
+        status_code=501,
+        detail=(
+            "defense/analyze-attack not implemented yet -- requires a persistence layer "
+            "for adaptive run results (evolved genome + its generated transactions, "
+            "keyed by id), not yet built"
+        ),
+    )
+
+@router.post("/defense/compile")
+def api_compile_defense(analysis: AttackFailureAnalysis):
+    policies = compile_policy(analysis)
+    for p in policies:
+        _CANDIDATE_POLICIES[p.policy_id] = p
+    return {"policies": [p.model_dump() for p in policies]}
+
+class SimulatePolicyRequest(BaseModel):
+    policy: DefensePolicy
+
+@router.post("/defense/simulate")
+def api_simulate_defense(req: SimulatePolicyRequest):
+    """simulate_policy_utility() needs real clean/attack featured DataFrames
+    and real model predictions on both -- none of which this request body
+    provides, and none of which are stored anywhere keyed by an attack/
+    policy id yet. Honest 501, not a fabricated utility number.
+    """
+    raise HTTPException(
+        status_code=501,
+        detail=(
+            "defense/simulate not implemented yet -- requires a persistence layer "
+            "for a policy's source attack (featured transactions + real model "
+            "predictions), not yet built"
+        ),
+    )
+
+@router.get("/defense/policies")
+def api_get_policies():
+    return {"policies": [p.model_dump() for p in _ACTIVE_POLICIES]}
+
+class ApprovePolicyRequest(BaseModel):
+    policy_id: str
+    action: str
+
+@router.post("/defense/approve")
+def api_approve_policy(req: ApprovePolicyRequest):
+    global _ACTIVE_POLICIES, _CANDIDATE_POLICIES
+    
+    if req.policy_id not in _CANDIDATE_POLICIES:
+        raise HTTPException(status_code=404, detail="Candidate policy not found")
+        
+    policy = _CANDIDATE_POLICIES[req.policy_id]
+    
+    if policy.status != "CANDIDATE":
+        raise HTTPException(status_code=422, detail=f"Policy is in invalid state for approval: {policy.status}")
+        
+    if req.action == "APPROVE":
+        policy.status = "ACTIVE"
+        # Prevent duplicates
+        if not any(p.policy_id == policy.policy_id for p in _ACTIVE_POLICIES):
+            _ACTIVE_POLICIES.append(policy)
+    elif req.action == "REJECT":
+        policy.status = "REJECTED"
+    else:
+        raise HTTPException(status_code=422, detail="Invalid action")
+        
+    return {
+        "status": "success",
+        "policy_id": policy.policy_id,
+        "action": req.action,
+        "new_status": policy.status
+    }
+@router.get("/defense/radar")
+def api_get_radar():
+    """Real novelty summary over Day 4's held-out test_df (already engineered,
+    already available in _APP_STATE -- no fresh generation or "which attack"
+    choice needed). Reuses the exact same compute_novelty_score/threshold/
+    cluster_unknowns/generate_cluster_report pipeline /zero-day/scan uses.
+    """
+    state = _get_state()
+    test_df = state["test_df"]
+    radar_state = state["radar_state"]
+    threshold = state["radar_threshold"]
+
+    scored = test_df.copy()
+    novelty_scores = compute_novelty_score(radar_state, scored)
+    scored["novelty_score"] = novelty_scores
+    scored["is_unknown"] = novelty_scores > threshold
+
+    unknown_df = scored[scored["is_unknown"]].copy()
+    clustered = cluster_unknowns(unknown_df)
+    cluster_reports = generate_cluster_report(clustered)
+
+    return {
+        "unknown_events": int(scored["is_unknown"].sum()),
+        "unknown_clusters": len(cluster_reports),
+        "novelty_score": float(novelty_scores.mean()) if len(novelty_scores) > 0 else 0.0,
+        "first_seen": str(unknown_df["timestamp"].min()) if not unknown_df.empty else "N/A",
+        "last_seen": str(unknown_df["timestamp"].max()) if not unknown_df.empty else "N/A",
+        "status": "MONITORING"
+    }
+
+@router.get("/defense/evolution")
+def api_get_evolution():
+    """Real per-generation trajectory from the most recent /arena/adaptive
+    call this server session (_LATEST_ADAPTIVE_RUN), same pattern as
+    /metrics serving _LATEST_ARENA_RUN. Honest 501 -- not a fabricated
+    trajectory -- if no adaptive run has happened yet this session.
+    """
+    if _LATEST_ADAPTIVE_RUN is not None:
+        return _LATEST_ADAPTIVE_RUN
+
+    raise HTTPException(
+        status_code=501,
+        detail=(
+            "defense/evolution: no /arena/adaptive run has happened yet this "
+            "session -- trigger one to populate real trajectory data"
+        ),
+    )
+
+# --- STEP 7: JUDGE MODE API ---
+from app.judge.schemas import JudgeScenario
+from app.judge.scenario_runner import ScenarioOrchestrator
+
+@router.post("/judge/scenario")
+def api_create_judge_scenario(req: JudgeScenario):
+    state = ScenarioOrchestrator.create_scenario(req)
+    return state.dict()
+
+import threading
+
+@router.post("/judge/scenario/{scenario_id}/run")
+def api_run_judge_scenario(scenario_id: str):
+    # Run async so the frontend can poll
+    t = threading.Thread(target=ScenarioOrchestrator.run_scenario, args=(scenario_id,))
+    t.start()
+    return {"status": "started", "scenario_id": scenario_id}
+
+@router.get("/judge/scenario/{scenario_id}")
+def api_get_judge_scenario(scenario_id: str):
+    state = ScenarioOrchestrator.get_state(scenario_id)
+    if not state:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    return state.dict()
+
+@router.post("/judge/scenario/{scenario_id}/reset")
+def api_reset_judge_scenario(scenario_id: str):
+    ScenarioOrchestrator.reset(scenario_id)
+    return {"status": "reset"}
+
+@router.post("/judge/scenario/{scenario_id}/approve")
+def api_approve_judge_scenario(scenario_id: str):
+    ScenarioOrchestrator.approve_and_continue(scenario_id)
+    return {"status": "approved"}

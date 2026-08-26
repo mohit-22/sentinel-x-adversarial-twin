@@ -552,7 +552,12 @@ def harvest_hard_negatives(
     }
 
 
-def retrain(original_train_df: pd.DataFrame, hard_negatives: pd.DataFrame, feature_columns: List[str] = FEATURE_COLUMNS):
+def retrain(
+    original_train_df: pd.DataFrame, 
+    hard_negatives: pd.DataFrame, 
+    feature_columns: List[str] = FEATURE_COLUMNS,
+    immune_memory_negatives: Optional[pd.DataFrame] = None
+):
     """Full retrain (not incremental) on train data augmented with hard negatives.
 
     TODO (candidate for the docx's limitations/future-work section): plain
@@ -567,8 +572,13 @@ def retrain(original_train_df: pd.DataFrame, hard_negatives: pd.DataFrame, featu
     original-fraud ratio rather than adding all harvested examples
     unconditionally.
     """
-    augmented = pd.concat([original_train_df, hard_negatives], ignore_index=True)
-    return train_lightgbm_detector(augmented, feature_columns)
+    if immune_memory_negatives is not None and not immune_memory_negatives.empty:
+        augmented_train_df = pd.concat([original_train_df, hard_negatives, immune_memory_negatives], ignore_index=True)
+    else:
+        augmented_train_df = pd.concat([original_train_df, hard_negatives], ignore_index=True)
+    
+    # Train M1
+    return train_lightgbm_detector(augmented_train_df, feature_columns)
 
 
 def re_test(
@@ -679,9 +689,16 @@ def run_arena_mvp_gate(
     base evasion, 500 instances yields too few evaded examples for a
     stable measurement.
     """
-    initial = run_attack(genome, model, customers, clean_history, merchants, graph_features, feature_columns, n_instances, seed)
+    train_customer_ids = train_df["customer_id"].unique()
+    test_customer_ids = test_df["customer_id"].unique()
+    train_customers = customers[customers["customer_id"].isin(train_customer_ids)]
+    test_customers = customers[customers["customer_id"].isin(test_customer_ids)]
+
+    initial = run_attack(genome, model, test_customers, clean_history, merchants, graph_features, feature_columns, min(n_instances, len(test_customers)), seed)
+    
+    training_attack = run_attack(genome, model, train_customers, clean_history, merchants, graph_features, feature_columns, min(n_instances, len(train_customers)), seed + 10)
     harvest = harvest_hard_negatives(
-        initial["evaded_rows"], initial["attacks_raw"], customers, clean_history, merchants, graph_features, genome, seed
+        training_attack["evaded_rows"], training_attack["attacks_raw"], customers, clean_history, merchants, graph_features, genome, seed
     )
     model_1 = retrain(train_df, harvest["hard_negatives"], feature_columns)
 
@@ -730,7 +747,10 @@ def run_arena_mvp_gate(
             "harvest_rejected_count": harvest["rejected_count"],
             "matched_population_size": len(matched_customer_ids),
             "initial_customer_ids": initial["customer_ids_used"],
+            "training_customer_ids": training_attack["customer_ids_used"],
             "final_customer_ids": official_final["customer_ids_used"],
+            "final_transaction_ids": official_final["transaction_ids_used"],
+            "retraining_transaction_ids": retraining_transaction_ids,
             "populations_matched": bool(set(official_final["customer_ids_used"]) == set(matched_customer_ids)),
             "retest_disjoint_from_retraining_transactions": bool(
                 official_final["transaction_ids_used"].isdisjoint(retraining_transaction_ids)
@@ -802,16 +822,25 @@ def run_multi_family_hardening(
     a real, non-cherry-picked, reduced-scale run (~2 minutes); n_instances
     remains overridable up to 2000 for the full official run.
     """
+    train_customer_ids = train_df["customer_id"].unique()
+    test_customer_ids = test_df["customer_id"].unique()
+    train_customers = customers[customers["customer_id"].isin(train_customer_ids)]
+    test_customers = customers[customers["customer_id"].isin(test_customer_ids)]
+
     per_family_attack: Dict[str, Dict] = {}
     all_hard_negatives: List[pd.DataFrame] = []
 
     for genome in genomes:
         attack = run_attack(
-            genome, model, customers, clean_history, merchants, graph_features,
-            feature_columns, n_instances, seed,
+            genome, model, test_customers, clean_history, merchants, graph_features,
+            feature_columns, min(n_instances, len(test_customers)), seed,
+        )
+        training_attack = run_attack(
+            genome, model, train_customers, clean_history, merchants, graph_features,
+            feature_columns, min(n_instances, len(train_customers)), seed + 10,
         )
         harvest = harvest_hard_negatives(
-            attack["evaded_rows"], attack["attacks_raw"], customers, clean_history,
+            training_attack["evaded_rows"], training_attack["attacks_raw"], customers, clean_history,
             merchants, graph_features, genome, seed,
         )
         per_family_attack[genome["family"]] = {"attack": attack, "harvest": harvest}
@@ -860,4 +889,9 @@ def run_multi_family_hardening(
         # hardening regresses general performance, same check
         # run_arena_mvp_gate already runs for the single-family case.
         "retrained_metrics": evaluate_detector(model_multi, test_df, feature_columns),
+        "_diagnostics": {
+            "training_customer_ids": train_customers["customer_id"].unique(),
+            "final_customer_ids": test_customers["customer_id"].unique(),
+            "retraining_transaction_ids": set(combined_hard_negatives["transaction_id"]),
+        },
     }

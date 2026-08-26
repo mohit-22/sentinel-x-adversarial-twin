@@ -300,3 +300,52 @@ def test_payment_twin_counterfactual_never_collides_with_real_beneficiaries(clie
     normal_ids = {t["transaction_id"] for t in body["normal_transactions"]}
     counterfactual_ids = {t["transaction_id"] for t in body["counterfactual_transactions"]}
     assert normal_ids.isdisjoint(counterfactual_ids)
+
+
+# ============================================================================
+# /api/v1/judge/scenario endpoints -- Step 7 Judge Mode API
+# ============================================================================
+
+
+def test_judge_scenario_api_lifecycle(client):
+    payload = {
+        "scenario_id": "test_api_scen_1",
+        "seed": 42,
+        "attack_family": "micro_structuring",
+        "attack_scale": 50,
+        "difficulty": "EASY",
+        "adaptive_red_team_enabled": False,
+        "zero_day_radar_enabled": False,
+        "defense_compiler_enabled": False,
+        "human_approval_required": False,
+        "evolution_generations": 0
+    }
+    # 1. Create
+    res_create = client.post("/api/v1/judge/scenario", json=payload)
+    assert res_create.status_code == 200
+    st = res_create.json()
+    assert st["scenario"]["scenario_id"] == "test_api_scen_1"
+    assert st["current_phase"] == "PREPARE"
+
+    # 2. Get state
+    res_get = client.get("/api/v1/judge/scenario/test_api_scen_1")
+    assert res_get.status_code == 200
+    assert res_get.json()["scenario"]["scenario_id"] == "test_api_scen_1"
+
+    # 3. Run
+    res_run = client.post("/api/v1/judge/scenario/test_api_scen_1/run")
+    assert res_run.status_code == 200
+    assert res_run.json()["status"] == "started"
+
+    # Wait briefly for thread or check state
+    import time
+    time.sleep(1)
+    res_get_running = client.get("/api/v1/judge/scenario/test_api_scen_1")
+    assert res_get_running.status_code == 200
+
+    # 4. Reset
+    res_reset = client.post("/api/v1/judge/scenario/test_api_scen_1/reset")
+    assert res_reset.status_code == 200
+    res_get_after = client.get("/api/v1/judge/scenario/test_api_scen_1")
+    assert res_get_after.status_code == 404
+

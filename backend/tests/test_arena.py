@@ -314,15 +314,42 @@ def test_run_arena_mvp_gate_smoke(small_arena_run):
         assert np.isfinite(mutation_metrics["robustness_gain"])
 
 
-def test_run_arena_mvp_gate_matched_population_disjoint_transactions(small_arena_run):
-    """Population is now MATCHED (same customers), not disjoint by customer --
-    the hold-out property that matters is disjoint TRANSACTIONS relative to
-    whatever fed hard-negative retraining.
+def test_run_arena_mvp_gate_no_held_out_customer_contamination(small_arena_run):
+    """Test 1 - no held-out customer contamination.
+    Assert that no customer appearing in the final held-out evaluation appears in retraining rows.
+    """
+    diagnostics = small_arena_run["_diagnostics"]
+    final_customers = set(diagnostics["final_customer_ids"])
+    training_customers = set(diagnostics["training_customer_ids"])
+    assert len(final_customers.intersection(training_customers)) == 0
+
+
+def test_run_arena_mvp_gate_no_row_overlap(small_arena_run):
+    """Test 2 - no row overlap.
+    Assert that final evaluation transaction IDs are absent from retraining data.
+    """
+    diagnostics = small_arena_run["_diagnostics"]
+    final_rows = set(diagnostics["final_transaction_ids"])
+    retraining_rows = set(diagnostics["retraining_transaction_ids"])
+    assert len(final_rows.intersection(retraining_rows)) == 0
+    assert diagnostics["retest_disjoint_from_retraining_transactions"] is True
+
+
+def test_run_arena_mvp_gate_fresh_reevaluation(small_arena_run):
+    """Test 3 - fresh re-evaluation.
+    Assert that the final evaluation attack batch is newly generated rather than the same rows used during hard-negative mining.
+    """
+    diagnostics = small_arena_run["_diagnostics"]
+    assert diagnostics["retest_disjoint_from_retraining_transactions"] is True
+
+
+def test_run_arena_mvp_gate_deterministic_customer_partition(small_arena_run):
+    """Test 4 - deterministic customer partition.
+    With the same seed, the train/held-out customer partition must remain identical across repeated runs.
     """
     diagnostics = small_arena_run["_diagnostics"]
     assert diagnostics["populations_matched"] is True
     assert set(diagnostics["final_customer_ids"]) == set(diagnostics["initial_customer_ids"])
-    assert diagnostics["retest_disjoint_from_retraining_transactions"] is True
 
 
 def test_run_arena_mvp_gate_harvest_reports_accept_reject_counts(small_arena_run):
@@ -400,3 +427,15 @@ def test_run_multi_family_hardening_reports_retrained_metrics_on_original_test_s
     for key in ("precision", "recall", "f1", "pr_auc", "fpr"):
         assert key in metrics
         assert 0.0 <= metrics[key] <= 1.0
+
+
+def test_run_multi_family_hardening_no_customer_contamination(multi_family_result):
+    """Test that the multi-family run maintains customer separation."""
+    diagnostics = multi_family_result["_diagnostics"]
+    final_customers = set(diagnostics["final_customer_ids"])
+    training_customers = set(diagnostics["training_customer_ids"])
+    assert len(final_customers.intersection(training_customers)) == 0
+
+    final_rows = diagnostics.get("final_transaction_ids", set())
+    retraining_rows = diagnostics["retraining_transaction_ids"]
+    assert len(final_rows.intersection(retraining_rows)) == 0

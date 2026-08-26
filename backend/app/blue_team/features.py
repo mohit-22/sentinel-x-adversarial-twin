@@ -26,7 +26,7 @@ def combine_clean_and_injected(
     clean["attack_family"] = None
     clean["genome_id"] = None
 
-    injected = injected_transactions.drop(columns=["instance_id"], errors="ignore").copy()
+    injected = injected_transactions.copy()
 
     combined = pd.concat([clean, injected], ignore_index=True)
     return combined.sort_values(["customer_id", "timestamp"]).reset_index(drop=True)
