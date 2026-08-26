@@ -240,6 +240,15 @@ export default function ObservatoryPage() {
       gens[entry.generation].push(entry);
     });
     
+    function getParentNodeId(targetGen: number, parentGenomeId: string): string | null {
+      for (let g = targetGen; g >= 0; g--) {
+        if (gens[g] && gens[g].some((e) => e.genome.genome_id === parentGenomeId)) {
+          return `${parentGenomeId}-gen${g}`;
+        }
+      }
+      return null;
+    }
+
     const X_SPACING = 220;
     const Y_SPACING = 150;
     
@@ -250,9 +259,10 @@ export default function ObservatoryPage() {
       
       entries.forEach((entry, idx) => {
         const isBase = gen === 0 && entry.parent_attack_id === entry.genome.genome_id;
+        const nodeId = `${entry.genome.genome_id}-gen${gen}`;
         
         newNodes.push({
-          id: entry.genome.genome_id,
+          id: nodeId,
           position: { x: startX + idx * X_SPACING, y: gen * Y_SPACING },
           type: "observatoryNode",
           data: {
@@ -268,18 +278,21 @@ export default function ObservatoryPage() {
         });
         
         if (entry.parent_attack_id && entry.parent_attack_id !== entry.genome.genome_id) {
-          newEdges.push({
-            id: `e-${entry.parent_attack_id}-${entry.genome.genome_id}`,
-            source: entry.parent_attack_id,
-            target: entry.genome.genome_id,
-            type: "smoothstep",
-            animated: entry.is_elite || entry.is_best,
-            style: { stroke: (entry.is_elite || entry.is_best) ? "var(--neon-green)" : "hsl(var(--muted-foreground))" },
-            markerEnd: {
-              type: MarkerType.ArrowClosed,
-              color: (entry.is_elite || entry.is_best) ? "var(--neon-green)" : "hsl(var(--muted-foreground))",
-            },
-          });
+          const parentNodeId = getParentNodeId(gen, entry.parent_attack_id);
+          if (parentNodeId) {
+            newEdges.push({
+              id: `e-${parentNodeId}-${nodeId}`,
+              source: parentNodeId,
+              target: nodeId,
+              type: "smoothstep",
+              animated: entry.is_elite || entry.is_best,
+              style: { stroke: (entry.is_elite || entry.is_best) ? "var(--neon-green)" : "hsl(var(--muted-foreground))" },
+              markerEnd: {
+                type: MarkerType.ArrowClosed,
+                color: (entry.is_elite || entry.is_best) ? "var(--neon-green)" : "hsl(var(--muted-foreground))",
+              },
+            });
+          }
         }
       });
     });

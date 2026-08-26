@@ -171,3 +171,20 @@ def test_lineage_deterministic_seed():
     lineage2 = client.get("/api/v1/observatory/lineage").json()["trajectory"]
     
     assert lineage1 == lineage2
+
+def test_economic_impact_arithmetic_consistency():
+    endpoints.initialize_app_state(seed=42)
+    # Run arena to generate impact
+    client.post("/api/v1/arena/run", json={"genome_id": MICRO_STRUCTURING_GENOME["genome_id"], "n_instances": 10})
+    
+    response = client.get("/api/v1/observatory/impact")
+    assert response.status_code == 200
+    data = response.json()
+    
+    val_m0 = data["value_caught_by_m0_inr"]
+    val_m1 = data["value_caught_after_hardening_inr"]
+    inc_val = data["incremental_value_prevented_inr"]
+    
+    # Enforce canonical rule:
+    # incremental_value_prevented_inr = value_caught_after_hardening_inr - value_caught_by_m0_inr
+    assert abs(inc_val - (val_m1 - val_m0)) < 1e-5, f"Mismatch: {inc_val} != {val_m1} - {val_m0}"
