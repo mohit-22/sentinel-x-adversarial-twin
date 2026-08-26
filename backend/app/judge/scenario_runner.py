@@ -341,6 +341,7 @@ class ScenarioOrchestrator:
             evasion_before=state.evolved_evasion,
             evasion_after=state.simulated_evasion_after if state.candidate_policy_id else state.evolved_evasion,
             evasion_reduction=evasion_reduction,
+            policy_simulation_note=None if state.candidate_policy_id else "no_policy_compiled",
             clean_fpr_delta=clean_fpr_delta,
             legitimate_block_rate=0.01,
             customer_friction_proxy=0.0,

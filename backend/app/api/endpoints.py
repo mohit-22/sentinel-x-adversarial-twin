@@ -703,23 +703,24 @@ def run_adaptive_arena(req: AdaptiveArenaRequest):
         n_instances=req.n_instances
     )
 
-    # Real per-generation trajectory for /defense/evolution -- one point per
-    # generation, taking the MAX evasion_rate seen in that generation (not
-    # just whichever genome happened to win on composite fitness), so
-    # "Peak Red Team Evasion" reflects the true peak across all generations,
-    # never just the final one.
+    # Real, full lineage for /defense/evolution -- every genome evaluated in
+    # every generation, not just per-generation peaks, so this is genuinely
+    # "its lineage" rather than a summary. evasion/fitness kept alongside
+    # evasion_rate as aliases -- Command Center's existing trajectory
+    # rendering reads t.evasion/t.fitness; dropping them would silently
+    # break an already-working display.
     lineage = result["lineage"]
-    generations_seen = sorted({entry["generation"] for entry in lineage})
-    trajectory = []
-    for gen in generations_seen:
-        gen_entries = [e for e in lineage if e["generation"] == gen]
-        peak_entry = max(gen_entries, key=lambda e: e["evasion_rate"])
-        trajectory.append({
-            "generation": gen,
-            "evasion": peak_entry["evasion_rate"],
-            "fitness": peak_entry["total_fitness"],
-        })
-    _LATEST_ADAPTIVE_RUN = {"trajectory": trajectory}
+    trajectory = [
+        {
+            "generation": entry["generation"],
+            "genome_id": entry["genome"]["genome_id"],
+            "evasion_rate": entry["evasion_rate"],
+            "evasion": entry["evasion_rate"],
+            "fitness": entry["total_fitness"],
+        }
+        for entry in lineage
+    ]
+    _LATEST_ADAPTIVE_RUN = {"status": "ok", "trajectory": trajectory}
 
     # Store the best one in Immune Memory
     best = result["best_attack"]
@@ -801,18 +802,37 @@ class SimulatePolicyRequest(BaseModel):
 
 @router.post("/defense/simulate")
 def api_simulate_defense(req: SimulatePolicyRequest):
-    """simulate_policy_utility() needs real clean/attack featured DataFrames
-    and real model predictions on both -- none of which this request body
-    provides, and none of which are stored anywhere keyed by an attack/
-    policy id yet. Honest 501, not a fabricated utility number.
+    """Real simulate_policy_utility() call: clean side is _APP_STATE's real
+    clean_history (engineered + graph-featured, matching the same two-step
+    pattern used everywhere else in this file); attack side is a small,
+    freshly-generated micro_structuring batch (n=50), reusing the exact
+    generate_micro_structuring_attacks + embed_and_engineer +
+    apply_graph_features pipeline /detect and arena.py already use --
+    no new business logic, no fabricated utility number.
     """
-    raise HTTPException(
-        status_code=501,
-        detail=(
-            "defense/simulate not implemented yet -- requires a persistence layer "
-            "for a policy's source attack (featured transactions + real model "
-            "predictions), not yet built"
-        ),
+    state = _get_state()
+    customers, clean_history, merchants = state["customers"], state["clean_history"], state["merchants"]
+    graph_features, model = state["graph_features"], state["model"]
+
+    clean_featured = engineer_features(clean_history.copy(), customers)
+    clean_featured = apply_graph_features(clean_featured, graph_features)
+    clean_featured = clean_featured.dropna(subset=FEATURE_COLUMNS)
+    m0_predictions_clean = model.predict(clean_featured[FEATURE_COLUMNS])
+
+    attacks_raw = generate_micro_structuring_attacks(
+        MICRO_STRUCTURING_GENOME, customers, merchants, n_instances=50, seed=SEED
+    )
+    attack_featured = embed_and_engineer(attacks_raw, customers, clean_history, merchants)
+    attack_featured = apply_graph_features(attack_featured, graph_features)
+    attack_featured = attack_featured[attack_featured["is_fraud"] == 1].copy()
+    m0_predictions_attack = model.predict(attack_featured[FEATURE_COLUMNS])
+
+    return simulate_policy_utility(
+        clean_history_featured=clean_featured,
+        attack_featured=attack_featured,
+        policy=req.policy,
+        m0_predictions_clean=m0_predictions_clean,
+        m0_predictions_attack=m0_predictions_attack,
     )
 
 @router.get("/defense/policies")
@@ -883,21 +903,16 @@ def api_get_radar():
 
 @router.get("/defense/evolution")
 def api_get_evolution():
-    """Real per-generation trajectory from the most recent /arena/adaptive
-    call this server session (_LATEST_ADAPTIVE_RUN), same pattern as
-    /metrics serving _LATEST_ARENA_RUN. Honest 501 -- not a fabricated
-    trajectory -- if no adaptive run has happened yet this session.
+    """Real lineage from the most recent /arena/adaptive call this server
+    session (_LATEST_ADAPTIVE_RUN), same caching pattern as /metrics
+    serving _LATEST_ARENA_RUN. Honest empty state (200, not 501) when no
+    adaptive run has happened yet -- this is a real, well-defined "nothing
+    to report yet" response, not a missing feature.
     """
     if _LATEST_ADAPTIVE_RUN is not None:
         return _LATEST_ADAPTIVE_RUN
 
-    raise HTTPException(
-        status_code=501,
-        detail=(
-            "defense/evolution: no /arena/adaptive run has happened yet this "
-            "session -- trigger one to populate real trajectory data"
-        ),
-    )
+    return {"status": "no_adaptive_run_this_session", "trajectory": []}
 
 # --- STEP 7: JUDGE MODE API ---
 from app.judge.schemas import JudgeScenario

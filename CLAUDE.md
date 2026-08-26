@@ -205,6 +205,10 @@ ALLOWED TO TOUCH: backend/app/red_team/arena.py (ONLY the new run_multi_family_h
 NOT ALLOWED TO TOUCH: anything else, including all other frontend screens and every other function in arena.py
 
 
+CURRENT PHASE: Post-audit bug-fix session -- 4 bugs, strict priority order, one at a time, verify each before the next
+ALLOWED TO TOUCH: backend/app/api/endpoints.py (route decorator paths + the 4 named handler bodies only), backend/app/judge/scenario_runner.py (the two _APP_STATE key lookups only), backend/app/red_team/adaptive_attack.py (the 3 named fixes only)
+NOT ALLOWED TO TOUCH: anything else -- this session does not add features, only fixes the 4 named bugs from the audit
+
 
 
 ---

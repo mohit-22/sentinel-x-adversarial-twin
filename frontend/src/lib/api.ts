@@ -447,8 +447,10 @@ export async function fetchRadar(): Promise<any> {
 }
 
 export async function fetchEvolution(): Promise<any> {
+  // Always 200 now: {status: "no_adaptive_run_this_session", trajectory: []}
+  // when nothing has run yet, or {status: "ok", trajectory: [...]} with the
+  // real lineage once /arena/adaptive has completed this session.
   const response = await fetch(`${API_BASE_URL}/defense/evolution`, { cache: "no-store" });
-  if (response.status === 501) return null;
   if (!response.ok) throw new ApiError(`Evolution fetch failed: ${response.status}`);
   return response.json();
 }

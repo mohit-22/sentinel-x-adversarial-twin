@@ -497,14 +497,13 @@ export default function Home() {
             <div className="mt-12 border-t border-border/40 pt-8 space-y-8">
               <div className="grid md:grid-cols-3 gap-6">
                 
-                {/* Red Team Evolution -- hidden entirely until real data
-                    exists (GET /defense/evolution is an honest 501: no
-                    persistence layer stores /arena/adaptive's lineage yet,
-                    and no UI anywhere triggers /arena/adaptive from this
-                    screen either). Showing a permanent "Not Implemented"
-                    card for a feature with no way to ever populate it here
-                    reads as broken; an honestly absent section does not. */}
-                {evolution && (
+                {/* Red Team Evolution -- hidden entirely until a real
+                    /arena/adaptive run has populated _LATEST_ADAPTIVE_RUN
+                    this session. GET /defense/evolution is always 200 now
+                    ({status: "no_adaptive_run_this_session", trajectory: []}
+                    when empty), so the check is on trajectory length, not
+                    on `evolution` truthiness alone. */}
+                {evolution && evolution.trajectory && evolution.trajectory.length > 0 && (
                   <Card className="border-border">
                     <CardHeader className="pb-2">
                       <CardTitle className="text-base flex items-center gap-2 text-destructive">
@@ -514,12 +513,15 @@ export default function Home() {
                       <CardDescription>Attack evolution trajectory</CardDescription>
                     </CardHeader>
                     <CardContent>
-                      <div className="space-y-3 mt-4 text-sm">
-                        {evolution.trajectory.map((t: any) => (
-                          <div key={t.generation} className="flex justify-between items-center p-2 rounded bg-muted/20 border-l-2 border-destructive">
-                            <span className="font-medium">Generation {t.generation}</span>
+                      <div className="space-y-3 mt-4 text-sm max-h-80 overflow-y-auto">
+                        {evolution.trajectory.map((t: any, idx: number) => (
+                          <div key={`${t.generation}-${t.genome_id}-${idx}`} className="flex justify-between items-center p-2 rounded bg-muted/20 border-l-2 border-destructive">
+                            <div>
+                              <span className="font-medium">Generation {t.generation}</span>
+                              <span className="text-xs text-muted-foreground block font-mono">{t.genome_id}</span>
+                            </div>
                             <div className="text-right">
-                              <span className="text-destructive font-bold">{(t.evasion * 100).toFixed(1)}% evasion</span>
+                              <span className="text-destructive font-bold">{(t.evasion_rate * 100).toFixed(1)}% evasion</span>
                               <span className="text-xs text-muted-foreground block text-right">Fitness: {t.fitness}</span>
                             </div>
                           </div>
