@@ -12,7 +12,7 @@ from app.blue_team.graph_engine import apply_graph_features
 from app.blue_team.detector import FEATURE_COLUMNS
 from app.blue_team.zero_day import compute_novelty_score
 
-def mutate_genome(genome: Dict, mutation_prob: float = 0.5, generation: int = 0, seed: int = 42) -> Dict:
+def mutate_genome(genome: Dict, mutation_prob: float = 0.5, generation: int = 0, seed: int = 42, parent_id: str = None) -> Dict:
     """Mutate a genome's parameters deterministically based on seed/random state.
 
     genome_id is derived from the already-seeded `random` module state
@@ -26,9 +26,12 @@ def mutate_genome(genome: Dict, mutation_prob: float = 0.5, generation: int = 0,
     """
     mutated = copy.deepcopy(genome)
     # Ensure it gets a new genome_id if it's a mutation
-    if "genome_id" in mutated and not mutated["genome_id"].startswith("MUT-"):
+    if "genome_id" in mutated:
         unique_component = random.randint(0, 999_999)
         mutated["genome_id"] = f"MUT-genome_{genome['family']}_{generation}_{seed}_{unique_component}"
+        
+    if parent_id is not None:
+        mutated["_parent_id"] = parent_id
         
     if "parameters" not in mutated:
         return mutated
@@ -108,8 +111,9 @@ def run_evolutionary_search(
     random.seed(seed)
     
     population = [base_genome]
+    base_genome_id = base_genome.get("genome_id")
     for _ in range(population_size - 1):
-        population.append(mutate_genome(base_genome, mutation_probability, generation=0, seed=seed))
+        population.append(mutate_genome(base_genome, mutation_probability, generation=0, seed=seed, parent_id=base_genome_id))
         
     lineage = []
     
@@ -168,7 +172,7 @@ def run_evolutionary_search(
                     "realism_score": 1.0, # generated successfully
                     "total_fitness": fitness,
                     "validity_status": "VALID",
-                    "parent_attack_id": base_genome.get("genome_id") if gen == 0 else "parent_id_tracked"
+                    "parent_attack_id": genome.get("_parent_id", base_genome_id) if gen == 0 else genome.get("_parent_id")
                 }
                 
             except Exception as e:
@@ -183,7 +187,7 @@ def run_evolutionary_search(
                     "realism_score": 0.0,
                     "total_fitness": fitness,
                     "validity_status": f"INVALID: {str(e)}",
-                    "parent_attack_id": None
+                    "parent_attack_id": genome.get("_parent_id", base_genome_id) if gen == 0 else genome.get("_parent_id")
                 }
                 
             gen_results.append(result)
@@ -193,15 +197,24 @@ def run_evolutionary_search(
         gen_results.sort(key=lambda x: x["total_fitness"], reverse=True)
         elites = gen_results[:elite_count]
         
+        # Mark elite status directly on the dictionaries
+        for i, res in enumerate(gen_results):
+            res["is_elite"] = (i < elite_count)
+            res["is_best"] = False  # Placeholder to be updated later
+        
         # Breed next generation
         if gen < generations - 1:
             population = [e["genome"] for e in elites]
             while len(population) < population_size:
                 parent = random.choice(elites)["genome"]
-                population.append(mutate_genome(parent, mutation_probability, generation=gen + 1, seed=seed))
+                population.append(mutate_genome(parent, mutation_probability, generation=gen + 1, seed=seed, parent_id=parent["genome_id"]))
                 
+    # Evaluate best overall and mark it
     best_result = sorted(lineage, key=lambda x: x["total_fitness"], reverse=True)[0]
-    
+    for res in lineage:
+        if res["genome"]["genome_id"] == best_result["genome"]["genome_id"]:
+            res["is_best"] = True
+            
     return {
         "best_attack": best_result,
         "lineage": lineage
