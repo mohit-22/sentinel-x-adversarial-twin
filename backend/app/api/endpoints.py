@@ -16,6 +16,8 @@ Day 6-final planning turn.
 """
 
 import time
+import uuid
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 import pandas as pd
@@ -913,6 +915,99 @@ def api_get_evolution():
         return _LATEST_ADAPTIVE_RUN
 
     return {"status": "no_adaptive_run_this_session", "trajectory": []}
+
+# --- STEP 6b: THREAT OBSERVATORY (reuses existing caches, no new state) ---
+
+@router.get("/observatory/lineage")
+def api_observatory_lineage():
+    """Fraud DNA lineage for the dashboard's evolution-tree view. Pure
+    passthrough of _LATEST_ADAPTIVE_RUN -- same cache /defense/evolution
+    reads, no new computation or state.
+    """
+    if _LATEST_ADAPTIVE_RUN is not None:
+        return _LATEST_ADAPTIVE_RUN
+
+    return {"status": "no_run", "trajectory": []}
+
+@router.get("/observatory/impact")
+def api_observatory_impact():
+    """Economic impact of the most recent /arena/run this session.
+    Honest zero-state when no arena run has happened yet -- fraud_prevented
+    with no hard negatives to multiply against is not a real number.
+    """
+    if not _APP_STATE:
+        raise HTTPException(503, "System initializing")
+
+    if _LATEST_ARENA_RUN is None:
+        return {
+            "status": "run_arena_first",
+            "hard_negatives": 0,
+            "avg_amount": 0.0,
+            "fraud_prevented_inr": 0.0,
+            "detection_rate": 0.0,
+            "transactions_protected": 0,
+        }
+
+    hard_negatives = _LATEST_ARENA_RUN.hard_examples_count
+    avg_amount = float(_APP_STATE["clean_history"]["amount"].mean())
+    fraud_prevented_inr = hard_negatives * avg_amount
+    detection_rate = evaluate_detector(_APP_STATE["model"], _APP_STATE["test_df"], FEATURE_COLUMNS)["f1"]
+    transactions_protected = len(_APP_STATE["test_df"])
+
+    return {
+        "status": "ok",
+        "hard_negatives": hard_negatives,
+        "avg_amount": avg_amount,
+        "fraud_prevented_inr": fraud_prevented_inr,
+        "detection_rate": detection_rate,
+        "transactions_protected": transactions_protected,
+    }
+
+class ObservatoryExportRequest(BaseModel):
+    run_id: str
+    genome_id: str
+
+@router.post("/observatory/export")
+def api_observatory_export(req: ObservatoryExportRequest):
+    """STIX 2.1-shaped threat-intel export for one known genome. Plain dict
+    construction -- no stix2 library, matching CLAUDE.md's tech-stack lock.
+    evasion_rate is looked up from this session's cached adaptive lineage
+    (_LATEST_ADAPTIVE_RUN) when this genome_id appears there; otherwise 0.0,
+    since no evasion measurement exists yet for a genome that was never run
+    through /arena/adaptive.
+    """
+    genome = _GENOME_REGISTRY.get(req.genome_id)
+    if not genome:
+        raise HTTPException(404, f"unknown genome_id: {req.genome_id!r}. Known: {sorted(_GENOME_REGISTRY)}")
+
+    latest_evasion = 0.0
+    if _LATEST_ADAPTIVE_RUN is not None:
+        matches = [t for t in _LATEST_ADAPTIVE_RUN.get("trajectory", []) if t["genome_id"] == req.genome_id]
+        if matches:
+            latest_evasion = matches[-1]["evasion_rate"]
+
+    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    return {
+        "type": "bundle",
+        "id": f"bundle--{uuid.uuid4()}",
+        "objects": [{
+            "type": "attack-pattern",
+            "id": f"attack-pattern--{uuid.uuid4()}",
+            "created": now,
+            "modified": now,
+            "name": genome["family"],
+            "description": genome["objective"],
+            "x_sentinel_genome_id": genome["genome_id"],
+            "x_sentinel_evasion_rate": latest_evasion,
+            "x_sentinel_mutations": genome["mutations"],
+            "x_sentinel_parameters": genome["parameters"],
+            "kill_chain_phases": [{
+                "kill_chain_name": "sentinel-x-fraud-lifecycle",
+                "phase_name": genome["family"],
+            }],
+        }],
+    }
 
 # --- STEP 7: JUDGE MODE API ---
 from app.judge.schemas import JudgeScenario

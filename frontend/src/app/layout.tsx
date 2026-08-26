@@ -1,6 +1,17 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import Link from "next/link";
 import "./globals.css";
+
+const NAV_LINKS: { href: string; label: string }[] = [
+  { href: "/", label: "Command Center" },
+  { href: "/red-team", label: "Red Team Lab" },
+  { href: "/payment-twin", label: "Payment Twin" },
+  { href: "/blue-team-soc", label: "Blue Team SOC" },
+  { href: "/arena", label: "Adversarial Arena" },
+  { href: "/judge", label: "Judge Sandbox" },
+  { href: "/observatory", label: "Threat Observatory" },
+];
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -23,7 +34,16 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        <nav className="flex flex-wrap gap-x-4 gap-y-1 border-b border-border bg-background px-4 py-2 text-xs text-muted-foreground">
+          {NAV_LINKS.map((link) => (
+            <Link key={link.href} href={link.href} className="hover:text-foreground">
+              {link.label}
+            </Link>
+          ))}
+        </nav>
+        {children}
+      </body>
     </html>
   );
 }
