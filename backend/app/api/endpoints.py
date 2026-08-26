@@ -722,7 +722,18 @@ def run_adaptive_arena(req: AdaptiveArenaRequest):
         }
         for entry in lineage
     ]
-    _LATEST_ADAPTIVE_RUN = {"status": "ok", "trajectory": trajectory}
+    
+    run_id = f"arena-adaptive-{req.genome_id}-{SEED}-{req.generations}-{req.population_size}"
+    created_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    
+    _LATEST_ADAPTIVE_RUN = {
+        "status": "ok", 
+        "run_id": run_id,
+        "base_genome_id": req.genome_id,
+        "created_at": created_at,
+        "trajectory": trajectory,
+        "lineage": lineage
+    }
 
     # Store the best one in Immune Memory
     best = result["best_attack"]
@@ -932,36 +943,47 @@ def api_observatory_lineage():
 @router.get("/observatory/impact")
 def api_observatory_impact():
     """Economic impact of the most recent /arena/run this session.
-    Honest zero-state when no arena run has happened yet -- fraud_prevented
-    with no hard negatives to multiply against is not a real number.
+    Honest zero-state when no arena run has happened yet.
     """
     if not _APP_STATE:
         raise HTTPException(503, "System initializing")
 
-    if _LATEST_ARENA_RUN is None:
+    from app.red_team.arena import _LATEST_ARENA_IMPACT
+
+    if _LATEST_ARENA_RUN is None or _LATEST_ARENA_RUN.run_id not in _LATEST_ARENA_IMPACT:
         return {
             "status": "run_arena_first",
-            "hard_negatives": 0,
-            "avg_amount": 0.0,
-            "fraud_prevented_inr": 0.0,
-            "detection_rate": 0.0,
-            "transactions_protected": 0,
+            "run_id": "",
+            "attack_family": "",
+            "total_attack_transactions": 0,
+            "total_attack_value_inr": 0.0,
+            "value_caught_by_m0_inr": 0.0,
+            "value_caught_after_hardening_inr": 0.0,
+            "incremental_value_prevented_inr": 0.0,
+            "m0_evasion_rate": 0.0,
+            "post_hardening_evasion_rate": 0.0,
+            "additional_transactions_caught": 0,
+            "methodology": "This is a synthetic benchmark measurement computed from the actual generated attack transaction amounts and measured M0 vs post-hardening detector outcomes in the Sentinel-X Payment Twin. It is not a production financial-loss estimate."
         }
 
-    hard_negatives = _LATEST_ARENA_RUN.hard_examples_count
-    avg_amount = float(_APP_STATE["clean_history"]["amount"].mean())
-    fraud_prevented_inr = hard_negatives * avg_amount
-    detection_rate = evaluate_detector(_APP_STATE["model"], _APP_STATE["test_df"], FEATURE_COLUMNS)["f1"]
-    transactions_protected = len(_APP_STATE["test_df"])
-
+    impact = _LATEST_ARENA_IMPACT[_LATEST_ARENA_RUN.run_id]
+    
     return {
         "status": "ok",
-        "hard_negatives": hard_negatives,
-        "avg_amount": avg_amount,
-        "fraud_prevented_inr": fraud_prevented_inr,
-        "detection_rate": detection_rate,
-        "transactions_protected": transactions_protected,
+        "run_id": impact["run_id"],
+        "attack_family": impact["attack_family"],
+        "total_attack_transactions": impact["total_attack_transactions"],
+        "total_attack_value_inr": impact["total_attack_value_inr"],
+        "value_caught_by_m0_inr": impact["value_caught_by_m0_inr"],
+        "value_caught_after_hardening_inr": impact["value_caught_after_hardening_inr"],
+        "incremental_value_prevented_inr": impact["incremental_value_prevented_inr"],
+        "m0_evasion_rate": impact["m0_evasion_rate"],
+        "post_hardening_evasion_rate": impact["post_hardening_evasion_rate"],
+        "additional_transactions_caught": impact["additional_transactions_caught"],
+        "methodology": "This is a synthetic benchmark measurement computed from the actual generated attack transaction amounts and measured M0 vs post-hardening detector outcomes in the Sentinel-X Payment Twin. It is not a production financial-loss estimate."
     }
+
+import hashlib
 
 class ObservatoryExportRequest(BaseModel):
     run_id: str
@@ -969,39 +991,52 @@ class ObservatoryExportRequest(BaseModel):
 
 @router.post("/observatory/export")
 def api_observatory_export(req: ObservatoryExportRequest):
-    """STIX 2.1-shaped threat-intel export for one known genome. Plain dict
-    construction -- no stix2 library, matching CLAUDE.md's tech-stack lock.
-    evasion_rate is looked up from this session's cached adaptive lineage
-    (_LATEST_ADAPTIVE_RUN) when this genome_id appears there; otherwise 0.0,
-    since no evasion measurement exists yet for a genome that was never run
-    through /arena/adaptive.
-    """
-    genome = _GENOME_REGISTRY.get(req.genome_id)
-    if not genome:
-        raise HTTPException(404, f"unknown genome_id: {req.genome_id!r}. Known: {sorted(_GENOME_REGISTRY)}")
+    """STIX 2.1-shaped threat-intel export for one known genome."""
+    if _LATEST_ADAPTIVE_RUN is None:
+        raise HTTPException(status_code=404, detail="No adaptive run has occurred.")
 
-    latest_evasion = 0.0
-    if _LATEST_ADAPTIVE_RUN is not None:
-        matches = [t for t in _LATEST_ADAPTIVE_RUN.get("trajectory", []) if t["genome_id"] == req.genome_id]
-        if matches:
-            latest_evasion = matches[-1]["evasion_rate"]
+    if req.run_id != _LATEST_ADAPTIVE_RUN.get("run_id"):
+        raise HTTPException(status_code=404, detail=f"Invalid run_id: {req.run_id}")
 
-    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    lineage = _LATEST_ADAPTIVE_RUN.get("lineage", [])
+    entry = next((e for e in lineage if e["genome"]["genome_id"] == req.genome_id), None)
+    
+    if not entry:
+        raise HTTPException(status_code=404, detail=f"Genome {req.genome_id} does not belong to run {req.run_id}")
+
+    genome = entry["genome"]
+    created_at = _LATEST_ADAPTIVE_RUN["created_at"]
+
+    def stable_id(obj_type: str) -> str:
+        s = f"{req.run_id}_{req.genome_id}_{obj_type}"
+        h = hashlib.sha256(s.encode()).hexdigest()
+        return f"{obj_type}--{h}"
 
     return {
         "type": "bundle",
-        "id": f"bundle--{uuid.uuid4()}",
+        "id": stable_id("bundle"),
         "objects": [{
             "type": "attack-pattern",
-            "id": f"attack-pattern--{uuid.uuid4()}",
-            "created": now,
-            "modified": now,
+            "spec_version": "2.1",
+            "id": stable_id("attack-pattern"),
+            "created": created_at,
+            "modified": created_at,
             "name": genome["family"],
-            "description": genome["objective"],
+            "description": genome.get("objective", ""),
+            "x_sentinel_run_id": req.run_id,
             "x_sentinel_genome_id": genome["genome_id"],
-            "x_sentinel_evasion_rate": latest_evasion,
-            "x_sentinel_mutations": genome["mutations"],
-            "x_sentinel_parameters": genome["parameters"],
+            "x_sentinel_base_genome_id": _LATEST_ADAPTIVE_RUN.get("base_genome_id", ""),
+            "x_sentinel_attack_family": genome["family"],
+            "x_sentinel_generation": entry["generation"],
+            "x_sentinel_parent_attack_id": entry["parent_attack_id"],
+            "x_sentinel_evasion_rate": entry["evasion_rate"],
+            "x_sentinel_fitness": entry["total_fitness"],
+            "x_sentinel_novelty_score": entry["novelty_score"],
+            "x_sentinel_impact_score": entry["impact_score"],
+            "x_sentinel_realism_score": entry["realism_score"],
+            "x_sentinel_validity_status": entry["validity_status"],
+            "x_sentinel_parameters": genome.get("parameters", {}),
+            "x_sentinel_mutations": genome.get("mutations", []),
             "kill_chain_phases": [{
                 "kill_chain_name": "sentinel-x-fraud-lifecycle",
                 "phase_name": genome["family"],
