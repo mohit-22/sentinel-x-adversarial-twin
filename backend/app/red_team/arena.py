@@ -117,6 +117,8 @@ RISK_SCORE_SCALE_FACTOR: float = 0.5        # social_engineering/voice_authoriza
 # field -> customer attribute, for the "customers_own" swap-entity-field pool.
 _OWN_POOL_ATTR: Dict[str, str] = {"device_id": "primary_devices", "beneficiary_id": "usual_beneficiaries"}
 
+_LATEST_ARENA_IMPACT: Dict[str, Dict] = {}
+
 
 def _customer_row(customers: pd.DataFrame, customer_id: str) -> pd.Series:
     return customers.loc[customers["customer_id"] == customer_id].iloc[0]
@@ -593,6 +595,7 @@ def re_test(
     mutation_name: Optional[str] = None,
     feature_columns: List[str] = FEATURE_COLUMNS,
     seed: int = 42,
+    model_0=None,
 ) -> Dict:
     """Fresh mutated batch over a MATCHED customer population (the exact
     same customers as the initial attack, controlling for the population-
@@ -636,7 +639,7 @@ def re_test(
     y_pred = model.predict(fraud_rows[feature_columns])
     evaded_mask = y_pred == 0
 
-    return {
+    result = {
         "evasion_rate": float(evaded_mask.mean()),
         "total_fraud": int(len(fraud_rows)),
         "false_negatives": int(evaded_mask.sum()),
@@ -644,6 +647,42 @@ def re_test(
         "instance_ids_used": mutated_attacks_raw["instance_id"].unique(),
         "transaction_ids_used": set(mutated_attacks_raw["transaction_id"]),
     }
+
+    if model_0 is not None:
+        m0_pred = model_0.predict(fraud_rows[feature_columns])
+        
+        caught_by_m0 = (m0_pred == 1)
+        caught_by_m1 = (y_pred == 1)
+
+        total_attack_transactions = int(len(fraud_rows))
+        total_attack_value_inr = float(fraud_rows["amount"].sum())
+
+        transactions_caught_by_m0 = int(caught_by_m0.sum())
+        value_caught_by_m0_inr = float(fraud_rows.loc[caught_by_m0, "amount"].sum())
+
+        transactions_caught_after_hardening = int(caught_by_m1.sum())
+        value_caught_after_hardening_inr = float(fraud_rows.loc[caught_by_m1, "amount"].sum())
+
+        additional_transactions_caught = transactions_caught_after_hardening - transactions_caught_by_m0
+        incremental_value_prevented_inr = value_caught_after_hardening_inr - value_caught_by_m0_inr
+
+        m0_evasion_rate = 1.0 - caught_by_m0.mean() if total_attack_transactions > 0 else 0.0
+        post_hardening_evasion_rate = 1.0 - caught_by_m1.mean() if total_attack_transactions > 0 else 0.0
+
+        result["economic_impact"] = {
+            "total_attack_transactions": total_attack_transactions,
+            "total_attack_value_inr": total_attack_value_inr,
+            "transactions_caught_by_m0": transactions_caught_by_m0,
+            "value_caught_by_m0_inr": value_caught_by_m0_inr,
+            "transactions_caught_after_hardening": transactions_caught_after_hardening,
+            "value_caught_after_hardening_inr": value_caught_after_hardening_inr,
+            "additional_transactions_caught": additional_transactions_caught,
+            "incremental_value_prevented_inr": incremental_value_prevented_inr,
+            "m0_evasion_rate": float(m0_evasion_rate),
+            "post_hardening_evasion_rate": float(post_hardening_evasion_rate)
+        }
+
+    return result
 
 
 def compute_arg(initial_rate: float, final_rate: float) -> float:
@@ -709,6 +748,7 @@ def run_arena_mvp_gate(
         genome, model_1, customers, clean_history, merchants, graph_features,
         customer_ids=matched_customer_ids, exclude_transaction_ids=retraining_transaction_ids,
         mutation_name=None, feature_columns=feature_columns, seed=seed + 1000,
+        model_0=model,
     )
     official_arg = compute_arg(initial["evasion_rate"], official_final["evasion_rate"])
 
@@ -727,7 +767,7 @@ def run_arena_mvp_gate(
             "final_total_fraud": m_final["total_fraud"],
         }
 
-    return {
+    result = {
         "run_id": f"arena-{genome['genome_id']}-{seed}",
         "attack_family": genome["family"],
         "initial_evasion_rate": initial["evasion_rate"],
@@ -757,6 +797,15 @@ def run_arena_mvp_gate(
             ),
         },
     }
+    
+    run_id = result["run_id"]
+    if "economic_impact" in official_final:
+        impact = official_final["economic_impact"].copy()
+        impact["run_id"] = run_id
+        impact["attack_family"] = genome["family"]
+        _LATEST_ARENA_IMPACT[run_id] = impact
+        
+    return result
 
 
 def run_arena_for_all_families(
