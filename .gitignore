@@ -10,3 +10,5 @@ node_modules/
 .vscode/
 scratch_browser/
 .DS_Store
+.env.*
+coverage/

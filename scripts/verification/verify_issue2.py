@@ -2,13 +2,7 @@ import os
 import sys
 from pathlib import Path
 
-# Fix python import resolution properly
-SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = SCRIPT_DIR.parent
-BACKEND_DIR = PROJECT_ROOT / "backend"
 
-if str(BACKEND_DIR) not in sys.path:
-    sys.path.insert(0, str(BACKEND_DIR))
 
 from fastapi.testclient import TestClient
 from app.main import app
