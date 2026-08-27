@@ -678,6 +678,7 @@ class AdaptiveArenaRequest(BaseModel):
     elite_count: int = 1
     mutation_probability: float = 0.5
     n_instances: int = 50
+    seed: int = SEED
 
 @router.post("/arena/adaptive")
 def run_adaptive_arena(req: AdaptiveArenaRequest):
@@ -702,7 +703,8 @@ def run_adaptive_arena(req: AdaptiveArenaRequest):
         generations=req.generations,
         elite_count=req.elite_count,
         mutation_probability=req.mutation_probability,
-        n_instances=req.n_instances
+        n_instances=req.n_instances,
+        seed=req.seed,
     )
 
     # Real, full lineage for /defense/evolution -- every genome evaluated in
@@ -723,7 +725,15 @@ def run_adaptive_arena(req: AdaptiveArenaRequest):
         for entry in lineage
     ]
     
-    run_id = f"arena-adaptive-{req.genome_id}-{SEED}-{req.generations}-{req.population_size}"
+    # Run identity must be a complete, deterministic representation of the
+    # actual execution configuration -- not just genome_id/generations/
+    # population_size (the old format silently collided across requests
+    # that differed only in elite_count/mutation_probability/n_instances,
+    # and always used the global SEED since no per-request seed existed).
+    run_id = (
+        f"arena-adaptive-{req.genome_id}-{req.seed}-{req.generations}-{req.population_size}"
+        f"-{req.elite_count}-{req.mutation_probability}-{req.n_instances}"
+    )
     created_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     
     _LATEST_ADAPTIVE_RUN = {

@@ -188,3 +188,97 @@ def test_economic_impact_arithmetic_consistency():
     # Enforce canonical rule:
     # incremental_value_prevented_inr = value_caught_after_hardening_inr - value_caught_by_m0_inr
     assert abs(inc_val - (val_m1 - val_m0)) < 1e-5, f"Mismatch: {inc_val} != {val_m1} - {val_m0}"
+
+
+# --- Run identity / request-seed integrity (final integrity audit fix) ----
+
+_BASE_ADAPTIVE_BODY = {
+    "genome_id": MICRO_STRUCTURING_GENOME["genome_id"],
+    "population_size": 2,
+    "generations": 2,
+    "elite_count": 1,
+    "mutation_probability": 0.5,
+    "n_instances": 5,
+    "seed": 42,
+}
+
+
+def _run_id_for(**overrides):
+    endpoints.initialize_app_state(seed=42)
+    body = {**_BASE_ADAPTIVE_BODY, **overrides}
+    response = client.post("/api/v1/arena/adaptive", json=body)
+    assert response.status_code == 200, response.text
+    return response.json()["run_id"]
+
+
+def test_run_id_identical_for_identical_request():
+    id_a = _run_id_for()
+    id_b = _run_id_for()
+    assert id_a == id_b
+
+
+def test_run_id_differs_by_seed():
+    id_a = _run_id_for(seed=42)
+    id_b = _run_id_for(seed=123)
+    assert id_a != id_b
+
+
+def test_run_id_differs_by_n_instances():
+    id_a = _run_id_for(n_instances=40)
+    id_b = _run_id_for(n_instances=41)
+    assert id_a != id_b
+
+
+def test_run_id_differs_by_generations():
+    id_a = _run_id_for(generations=2)
+    id_b = _run_id_for(generations=3)
+    assert id_a != id_b
+
+
+def test_run_id_differs_by_population_size():
+    id_a = _run_id_for(population_size=2)
+    id_b = _run_id_for(population_size=3)
+    assert id_a != id_b
+
+
+def test_run_id_differs_by_elite_count():
+    id_a = _run_id_for(elite_count=1)
+    id_b = _run_id_for(elite_count=2)
+    assert id_a != id_b
+
+
+def test_run_id_differs_by_mutation_probability():
+    id_a = _run_id_for(mutation_probability=0.5)
+    id_b = _run_id_for(mutation_probability=0.3)
+    assert id_a != id_b
+
+
+def test_request_seed_is_passed_into_run_evolutionary_search(monkeypatch):
+    """Proves seed propagation at the actual call site, not just inferred
+    from a downstream side effect (lineage content)."""
+    endpoints.initialize_app_state(seed=42)
+    captured = {}
+    real_fn = endpoints.run_evolutionary_search
+
+    def spy(*args, **kwargs):
+        captured["seed"] = kwargs.get("seed")
+        return real_fn(*args, **kwargs)
+
+    monkeypatch.setattr(endpoints, "run_evolutionary_search", spy)
+    response = client.post("/api/v1/arena/adaptive", json={**_BASE_ADAPTIVE_BODY, "seed": 777})
+    assert response.status_code == 200
+    assert captured["seed"] == 777
+
+
+def test_same_request_seed_produces_deterministic_lineage():
+    endpoints.initialize_app_state(seed=42)
+    client.post("/api/v1/arena/adaptive", json={**_BASE_ADAPTIVE_BODY, "seed": 99})
+    lineage1 = client.get("/api/v1/observatory/lineage").json()["lineage"]
+
+    endpoints._APP_STATE.clear()
+    endpoints._LATEST_ADAPTIVE_RUN = None
+    endpoints.initialize_app_state(seed=42)
+    client.post("/api/v1/arena/adaptive", json={**_BASE_ADAPTIVE_BODY, "seed": 99})
+    lineage2 = client.get("/api/v1/observatory/lineage").json()["lineage"]
+
+    assert lineage1 == lineage2
