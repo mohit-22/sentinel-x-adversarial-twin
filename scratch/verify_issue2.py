@@ -1,4 +1,15 @@
 import os
+import sys
+from pathlib import Path
+
+# Fix python import resolution properly
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent
+BACKEND_DIR = PROJECT_ROOT / "backend"
+
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
 from fastapi.testclient import TestClient
 from app.main import app
 def check():
@@ -88,6 +99,9 @@ def check():
     for e in lineage:
         gid = e["genome"]["genome_id"]
         pid = e["parent_attack_id"]
+        
+        assert pid != "parent_id_tracked", "Found placeholder parent_id_tracked"
+        
         if not pid or pid == gid:
             if e["generation"] != 0:
                 self_loops += 1
@@ -103,6 +117,9 @@ def check():
     print(f"Accidental self loops (non-root): {self_loops}")
     print(f"Reconstructed edges: {edges}")
 
+    assert missing == 0, f"Found {missing} missing parents"
+    assert self_loops == 0, f"Found {self_loops} non-root self loops"
+
     # "Node count match" was previously `total_records == len(lineage)` --
     # comparing a variable to itself, always True regardless of any real
     # bug. The real, meaningful cross-check available from this same
@@ -112,8 +129,7 @@ def check():
     expected_total = POPULATION_SIZE * GENERATIONS
     node_count_consistent = total_records == len(trajectory) == expected_total
     print(f"Node count match (lineage vs trajectory vs population*generations={expected_total}): {node_count_consistent}")
-    if not node_count_consistent:
-        print(f"  lineage={total_records} trajectory={len(trajectory)} expected={expected_total}")
+    assert node_count_consistent, f"Node count mismatch: lineage={total_records} trajectory={len(trajectory)} expected={expected_total}"
 
     # /observatory/impact is populated by /arena/run (via
     # _LATEST_ARENA_RUN/_LATEST_ARENA_IMPACT), NOT by /arena/adaptive --
@@ -125,17 +141,23 @@ def check():
     impact = client.get("/api/v1/observatory/impact").json()
     print("\nECONOMIC IMPACT REGRESSION")
     print("status:", impact["status"])
-    if impact["status"] != "ok":
-        print("  /arena/run did not populate a real impact record -- cannot check the arithmetic meaningfully.")
-    else:
-        print("total_attack_value_inr:", impact["total_attack_value_inr"])
-        print("value_caught_by_m0_inr:", impact["value_caught_by_m0_inr"])
-        print("value_caught_after_hardening_inr:", impact["value_caught_after_hardening_inr"])
-        print("incremental_value_prevented_inr:", impact["incremental_value_prevented_inr"])
-        val_m0 = impact["value_caught_by_m0_inr"]
-        val_m1 = impact["value_caught_after_hardening_inr"]
-        inc = impact["incremental_value_prevented_inr"]
-        print("Recomputed exactly val_m1 - val_m0:", val_m1 - val_m0)
-        print("Matches:", abs(inc - (val_m1 - val_m0)) < 1e-5)
+    
+    assert impact["status"] == "ok", "/arena/run did not populate a real impact record -- cannot check the arithmetic meaningfully."
+    
+    # Never treat all-zero `run_arena_first` as a successful impact proof.
+    assert impact["total_attack_value_inr"] > 0, "Impact value is 0, meaning it hit the fallback all-zero state"
+    
+    print("total_attack_value_inr:", impact["total_attack_value_inr"])
+    print("value_caught_by_m0_inr:", impact["value_caught_by_m0_inr"])
+    print("value_caught_after_hardening_inr:", impact["value_caught_after_hardening_inr"])
+    print("incremental_value_prevented_inr:", impact["incremental_value_prevented_inr"])
+    val_m0 = impact["value_caught_by_m0_inr"]
+    val_m1 = impact["value_caught_after_hardening_inr"]
+    inc = impact["incremental_value_prevented_inr"]
+    print("Recomputed exactly val_m1 - val_m0:", val_m1 - val_m0)
+    
+    assert abs(inc - (val_m1 - val_m0)) < 1e-5, f"Impact formula mismatch! Expected {val_m1 - val_m0}, got {inc}"
+    print("Matches:", True)
 
 check()
+

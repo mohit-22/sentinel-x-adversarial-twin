@@ -3,6 +3,18 @@
 Calls only existing, unmodified production functions/endpoints. Does not
 alter any production file. Section numbers match the audit request.
 """
+import sys
+import os
+from pathlib import Path
+
+# Fix python import resolution properly
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent
+BACKEND_DIR = PROJECT_ROOT / "backend"
+
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
 import numpy as np
 from fastapi.testclient import TestClient
 from app.main import app
@@ -33,8 +45,20 @@ def section_1_run_id_seed_integrity():
 
     from app.core.config import SEED
     print(f"\nconfig.py SEED = {SEED}")
-    run_id_line = [l for l in src.splitlines() if "run_id = f" in l][0].strip()
-    print("run_id construction line:", run_id_line)
+    
+    # Extract run_id assignment block (handling multi-line assignment)
+    src_lines = src.splitlines()
+    run_id_lines = []
+    in_run_id = False
+    for line in src_lines:
+        if "run_id = (" in line or "run_id = f" in line:
+            in_run_id = True
+        if in_run_id:
+            run_id_lines.append(line.strip())
+            if line.strip().endswith(")") or "run_id = f" in line:
+                break
+    run_id_str = " ".join(run_id_lines)
+    print("run_id construction line:", run_id_str)
 
     ep.initialize_app_state(seed=42)
     client = TestClient(app)

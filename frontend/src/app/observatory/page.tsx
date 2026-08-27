@@ -337,6 +337,20 @@ export default function ObservatoryPage() {
     });
   }
 
+  // Compute unique genomes for STIX export dropdown
+  const uniqueGenomes = useMemo(() => {
+    if (!lineage?.trajectory) return [];
+    const seen = new Set<string>();
+    const unique: TrajectoryEntry[] = [];
+    for (const t of lineage.trajectory) {
+      if (!seen.has(t.genome_id)) {
+        seen.add(t.genome_id);
+        unique.push(t);
+      }
+    }
+    return unique;
+  }, [lineage?.trajectory]);
+
   return (
     <div className="min-h-screen bg-background p-8 text-foreground">
       <div className="mx-auto max-w-5xl space-y-6">
@@ -679,7 +693,7 @@ export default function ObservatoryPage() {
                     onChange={(e) => setExportGenomeId(e.target.value)}
                     className="w-full rounded-md border border-border bg-input/30 px-3 py-2 text-sm text-foreground disabled:opacity-50"
                   >
-                    {lineage.trajectory.map((t) => (
+                    {uniqueGenomes.map((t) => (
                       <option key={t.genome_id} value={t.genome_id}>
                         Generation {t.generation} ({t.genome_id})
                       </option>
