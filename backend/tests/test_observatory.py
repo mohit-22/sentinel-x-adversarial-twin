@@ -208,7 +208,9 @@ def _run_id_for(**overrides):
     body = {**_BASE_ADAPTIVE_BODY, **overrides}
     response = client.post("/api/v1/arena/adaptive", json=body)
     assert response.status_code == 200, response.text
-    return response.json()["run_id"]
+    # run_id isn't in /arena/adaptive's own response body -- it's only in
+    # _LATEST_ADAPTIVE_RUN, read back via GET /observatory/lineage.
+    return client.get("/api/v1/observatory/lineage").json()["run_id"]
 
 
 def test_run_id_identical_for_identical_request():
