@@ -1113,3 +1113,19 @@ def api_reset_judge_scenario(scenario_id: str):
 def api_approve_judge_scenario(scenario_id: str):
     ScenarioOrchestrator.approve_and_continue(scenario_id)
     return {"status": "approved"}
+
+# --- NEW: Recursive Defense Certification Engine ---
+
+from app.defense.schemas import CertificationRequest, CertificationResult
+from app.defense.recursive_engine import run_certification
+
+@router.post("/defense/certify", response_model=CertificationResult)
+def api_defense_certify(request: CertificationRequest) -> CertificationResult:
+    """
+    Executes the recursive defense certification loop:
+    D0 -> Attack M0 -> Discover W1 -> Defense D1 -> validate D1 -> ATTACK D1 -> etc.
+    """
+    if not _APP_STATE:
+        raise HTTPException(status_code=503, detail="app state not initialized")
+    
+    return run_certification(request)
