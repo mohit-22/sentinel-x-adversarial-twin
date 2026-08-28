@@ -8,6 +8,7 @@ touch (Day 6 final: file creation; Day 7: CORS) as genuine oversights in
 the phase notes rather than intentional exclusions.
 """
 
+import asyncio
 import os
 from contextlib import asynccontextmanager
 
@@ -19,7 +20,18 @@ from app.api.endpoints import initialize_app_state, router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    initialize_app_state()
+    # initialize_app_state() is a plain synchronous, CPU-bound call (dataset
+    # generation + LightGBM training + graph/novelty setup). Calling it
+    # directly here blocks the single asyncio event loop for its entire
+    # duration, which delays uvicorn's own startup completion past hosting
+    # platforms' port-scan timeouts (proven: Render's free-tier scanner
+    # times out waiting for the port before this call ever returns).
+    # Running it in the default executor lets uvicorn finish startup and
+    # bind the port immediately; requests made before it finishes get an
+    # honest 503 from _get_state() (unchanged, pre-existing behavior) --
+    # never a fabricated "ready" response.
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(None, initialize_app_state)
     yield
 
 
