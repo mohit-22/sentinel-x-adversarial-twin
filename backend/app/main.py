@@ -8,6 +8,7 @@ touch (Day 6 final: file creation; Day 7: CORS) as genuine oversights in
 the phase notes rather than intentional exclusions.
 """
 
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -24,12 +25,21 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Sentinel-X API", lifespan=lifespan)
 
-# Dev-only CORS: the frontend (localhost:3000) and backend (localhost:8000)
-# are different origins, so the browser blocks fetch() without this --
-# confirmed via a simulated preflight returning 405 before this was added.
+# Local dev origins (frontend/backend are different ports, so the browser
+# blocks fetch() without this -- confirmed via a simulated preflight
+# returning 405 before this was added), plus one optional deployed frontend
+# origin read from an environment variable. Never a wildcard: unset means
+# local dev behaves exactly as before, set means exactly one additional
+# real origin is allowed -- same "env var with a safe local default"
+# pattern the frontend already uses for its own API base URL.
+_allow_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+_deployed_frontend_origin = os.environ.get("FRONTEND_ORIGIN")
+if _deployed_frontend_origin:
+    _allow_origins.append(_deployed_frontend_origin)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=_allow_origins,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )

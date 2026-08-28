@@ -43,26 +43,44 @@ def _ragged_row_positions(counts: np.ndarray) -> np.ndarray:
 
 
 def _sample_unique_from_pool(
-    pool: np.ndarray, counts: np.ndarray, seed: int, exclude_self: bool = False
+    pool: np.ndarray, counts: np.ndarray, seed: int, exclude_self: bool = False,
+    chunk_size: int = 500,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Sample `counts[i]` unique items from `pool` for each of len(counts) rows.
 
     Returns (flat_values, counts) where flat_values is row-major concatenated
     (row i occupies flat_values[offset_i : offset_i + counts[i]]). If
     exclude_self is True, pool must equal the row index domain (0..n-1) and
-    row i never samples itself. Vectorized via per-row random ranking.
+    row i never samples itself. Vectorized via per-row random ranking,
+    processed in row-chunks (each chunk is still one vectorized NumPy op,
+    not a per-row Python loop) to bound peak memory: a single n_rows x
+    pool_size random matrix is O(n^2) when pool_size ~ n_rows -- exactly the
+    usual_beneficiaries case (exclude_self=True, pool=all customer_ids), a
+    ~1.7GB matrix+argsort+mask at N_CUSTOMERS=10,000 that OOM-killed the
+    process on a 512MB host. Chunking bounds this to
+    chunk_size x pool_size regardless of n_rows.
+
+    NOTE: this consumes the seeded `np.random` stream in a different order
+    than the single-matrix version, so exact per-row selections for a given
+    seed differ from the pre-chunking implementation. The sampling
+    distribution itself (uniform, unique, excludes self) is unchanged.
     """
     np.random.seed(seed)
     n_rows = counts.shape[0]
     pool_size = pool.shape[0]
-    rand_matrix = np.random.rand(n_rows, pool_size)
-    if exclude_self:
-        rand_matrix[np.arange(n_rows), np.arange(n_rows)] = np.inf
-    ranked_idx = np.argsort(rand_matrix, axis=1)
-    col_rank = np.arange(pool_size)[None, :]
-    mask = col_rank < counts[:, None]
-    selected_idx = ranked_idx[mask]
-    flat_values = pool[selected_idx]
+    flat_chunks = []
+    for start in range(0, n_rows, chunk_size):
+        end = min(start + chunk_size, n_rows)
+        rows_in_chunk = end - start
+        rand_matrix = np.random.rand(rows_in_chunk, pool_size)
+        if exclude_self:
+            rand_matrix[np.arange(rows_in_chunk), np.arange(start, end)] = np.inf
+        ranked_idx = np.argsort(rand_matrix, axis=1)
+        col_rank = np.arange(pool_size)[None, :]
+        mask = col_rank < counts[start:end, None]
+        selected_idx = ranked_idx[mask]
+        flat_chunks.append(pool[selected_idx])
+    flat_values = np.concatenate(flat_chunks)
     return flat_values, counts
 
 
