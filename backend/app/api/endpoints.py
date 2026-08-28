@@ -22,7 +22,7 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.blue_team.detector import FEATURE_COLUMNS, evaluate_detector, run_blue_team_pipeline
 from app.blue_team.explainability import compute_reason_codes, find_cached_feature_row
@@ -166,10 +166,16 @@ def _decision_from_score(score: float) -> str:
 
 
 class SimulateRequest(BaseModel):
-    n_customers: int = N_CUSTOMERS
-    n_merchants: int = N_MERCHANTS
-    n_transactions: int = N_TRANSACTIONS
-    days: int = SIMULATION_DAYS
+    # Bounds are resource limits, not scientific parameters -- generous
+    # enough to remain useful for custom-scale demos (5x the official
+    # N_CUSTOMERS/N_TRANSACTIONS default), but bounded so this stateless,
+    # unauthenticated endpoint can't be used to trigger unbounded dataset
+    # generation. Same Field(le=...) pattern already used by
+    # JudgeScenario/CertificationRequest.
+    n_customers: int = Field(default=N_CUSTOMERS, le=50_000)
+    n_merchants: int = Field(default=N_MERCHANTS, le=2_500)
+    n_transactions: int = Field(default=N_TRANSACTIONS, le=250_000)
+    days: int = Field(default=SIMULATION_DAYS, le=90)
     seed: int = SEED
 
 
@@ -673,11 +679,16 @@ def scan_zero_day(request: ZeroDayScanRequest) -> ZeroDayScanResponse:
 
 class AdaptiveArenaRequest(BaseModel):
     genome_id: str
-    population_size: int = 5
-    generations: int = 3
-    elite_count: int = 1
-    mutation_probability: float = 0.5
-    n_instances: int = 50
+    # Bounds are resource limits (this endpoint runs population_size x
+    # generations full generate+engineer+predict cycles), same pattern
+    # already used by JudgeScenario/CertificationRequest. Generous relative
+    # to every real value used this session (population_size<=5,
+    # generations<=3, n_instances<=100).
+    population_size: int = Field(default=5, ge=1, le=20)
+    generations: int = Field(default=3, ge=1, le=10)
+    elite_count: int = Field(default=1, ge=1, le=20)
+    mutation_probability: float = Field(default=0.5, ge=0.0, le=1.0)
+    n_instances: int = Field(default=50, ge=1, le=500)
     seed: int = SEED
 
 @router.post("/arena/adaptive")

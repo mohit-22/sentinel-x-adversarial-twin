@@ -68,9 +68,12 @@ export function PaymentTwinView() {
     <div className="min-h-screen bg-background p-8 text-foreground">
       <div className="mx-auto max-w-6xl space-y-6">
         <header className="border-b border-border pb-4">
-          <h1 className="text-xl font-semibold tracking-tight">Payment Twin</h1>
-          <p className="text-sm text-muted-foreground">
-            Normal behavior vs. counterfactual-attacked comparison
+          <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: "var(--neon-cyan)" }}>
+            Payment Intelligence
+          </p>
+          <h1 className="text-3xl font-bold tracking-tight">Payment Twin</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            What does normal look like for this customer -- and how does the simulated attack differ?
           </p>
         </header>
 
@@ -147,12 +150,14 @@ export function PaymentTwinView() {
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
               <TransactionColumn
                 title="Normal Behavior"
+                badge="NORMAL"
                 subtitle={`${data.normal_transactions.length} real transactions from this customer's clean history`}
                 accentColor="var(--neon-green)"
                 transactions={data.normal_transactions}
               />
               <TransactionColumn
                 title={`Counterfactual — ${FAMILY_LABELS[attackFamily]}`}
+                badge="ATTACK"
                 subtitle={`${data.counterfactual_transactions.length} rows from one freshly-generated attack instance for this same customer`}
                 accentColor="var(--neon-red)"
                 transactions={data.counterfactual_transactions}
@@ -176,11 +181,13 @@ function Field({ label, value }: { label: string; value: string }) {
 
 function TransactionColumn({
   title,
+  badge,
   subtitle,
   accentColor,
   transactions,
 }: {
   title: string;
+  badge: "NORMAL" | "ATTACK";
   subtitle: string;
   accentColor: string;
   transactions: (TransactionBase | InjectedTransaction)[];
@@ -190,7 +197,15 @@ function TransactionColumn({
   return (
     <Card>
       <CardHeader>
-        <CardTitle style={{ color: accentColor }}>{title}</CardTitle>
+        <div className="flex items-center gap-2">
+          <CardTitle style={{ color: accentColor }}>{title}</CardTitle>
+          <Badge
+            className="text-[10px] font-bold"
+            style={{ borderColor: accentColor, color: accentColor, backgroundColor: `color-mix(in oklch, ${accentColor} 12%, transparent)` }}
+          >
+            {badge}
+          </Badge>
+        </div>
         <p className="text-xs text-muted-foreground">{subtitle}</p>
       </CardHeader>
       <CardContent>

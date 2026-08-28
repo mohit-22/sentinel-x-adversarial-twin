@@ -125,9 +125,12 @@ export function RedTeamControls() {
     <div className="min-h-screen bg-background p-8 text-foreground">
       <div className="mx-auto max-w-4xl space-y-6">
         <header className="border-b border-border pb-4">
-          <h1 className="text-xl font-semibold tracking-tight">Red Team Lab</h1>
-          <p className="text-sm text-muted-foreground">
-            Attack Genomes &rarr; Adversarial Arena
+          <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: "var(--neon-red)" }}>
+            Offensive Security Laboratory
+          </p>
+          <h1 className="text-3xl font-bold tracking-tight">Attack Lab</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Attack Genomes &rarr; Adversarial Arena &mdash; discover what M0 misses, then harden it.
           </p>
         </header>
 

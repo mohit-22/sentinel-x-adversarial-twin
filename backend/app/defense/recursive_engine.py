@@ -16,6 +16,7 @@ from app.defense.schemas import (
 from app.blue_team.defense_compiler import DefensePolicy, analyze_attack, compile_policy
 from app.blue_team.policy_simulator import apply_policy
 from app.red_team.adaptive_attack import run_evolutionary_search
+from app.red_team.arena import generate_matched_population_attacks
 from app.blue_team.detector import FEATURE_COLUMNS, evaluate_detector
 from app.red_team.attack_genomes import (
     MICRO_STRUCTURING_GENOME,
@@ -25,6 +26,26 @@ from app.red_team.attack_genomes import (
     SYNTHETIC_VOICE_AUTHORIZATION_GENOME
 )
 from app.blue_team.zero_day import compute_novelty_score
+
+# Instance-id block spacing for the certification loop's own
+# base_attacks_df/evolved_attacks_df generation (audit finding: the plain
+# attacks_fn generator assigns transaction_id purely from the positional
+# loop index, e.g. "ATKTXN-0000-...", so two independent calls with
+# overlapping n_instances GUARANTEED collide regardless of seed/customers --
+# confirmed empirically, not theoretical). generate_matched_population_attacks's
+# instance_id_offset is exactly the mechanism arena.py's re_test already
+# uses to avoid this; CertificationRequest bounds attack_scale<=100 and
+# rounds<=3, so a 10,000-wide block per (round, base/evolved) leaves a huge
+# margin and stays well clear of arena.py's own RETEST_INSTANCE_ID_OFFSET
+# (1,000,000).
+_CERT_INSTANCE_ID_BLOCK = 10_000
+_CERT_INSTANCE_ID_BASE_OFFSET = 5_000_000
+
+
+def _cert_instance_id_offset(round_idx: int, is_evolved: bool) -> int:
+    slot = (round_idx - 1) * 2 + (1 if is_evolved else 0)
+    return _CERT_INSTANCE_ID_BASE_OFFSET + slot * _CERT_INSTANCE_ID_BLOCK
+
 
 ATTACK_GENOMES = {
     "micro_structuring": MICRO_STRUCTURING_GENOME,
@@ -132,7 +153,33 @@ def run_certification(request: CertificationRequest) -> CertificationResult:
         raise RuntimeError(f"CRITICAL LEAKAGE: {len(leakage)} customers in both train and test.")
 
     eval_customers = all_customers[all_customers["customer_id"].isin(test_customer_ids)].copy()
-    
+
+    # Matched population held constant for the WHOLE certification run (not
+    # re-drawn per round): isolates "did the genome/defense change" from
+    # "which customers got sampled this time", and keeps base_attacks_df a
+    # genuinely stable baseline probe across rounds (see row-leakage comment
+    # below, which relies on this).
+    n_pop = min(request.attack_scale, len(eval_customers))
+    matched_customer_ids = eval_customers["customer_id"].to_numpy()[
+        np.random.default_rng(request.seed).choice(len(eval_customers), size=n_pop, replace=False)
+    ]
+
+    # Row-level leakage tracking (gate 5 of the Nine-Gate Certification
+    # Logic below). Mirrors arena.py's re_test "exclude_transaction_ids"
+    # overlap-assert pattern already proven in this codebase, adapted for
+    # this engine's shape: base_attacks_df intentionally reuses the same
+    # seed every round (a stable baseline probe for fair round-to-round
+    # comparison), so its expected self-repetition across rounds is NOT
+    # leakage and is excluded from the cross-round check -- only checked
+    # against real train/test rows. evolved_attacks_df uses the evolving
+    # best_genome each round and is checked both against train/test AND
+    # against every earlier round's evolved_attacks_df, since genuinely
+    # fresh evaluation instances should never collide.
+    train_transaction_ids = set(train_df["transaction_id"].unique()) if train_df is not None else set()
+    test_transaction_ids = set(test_df["transaction_id"].unique())
+    seen_evolved_transaction_ids: set = set()
+    total_row_leakage = 0
+
     base_genome = ATTACK_GENOMES.get(request.attack_family)
     if not base_genome:
         raise ValueError(f"Unknown attack family: {request.attack_family}")
@@ -213,15 +260,32 @@ def run_certification(request: CertificationRequest) -> CertificationResult:
             status="COMPLETED"
         )
         
-        from app.red_team.attack_injector import ATTACK_GENERATORS
         from app.blue_team.features import combine_clean_and_injected, engineer_features
         from app.blue_team.graph_engine import apply_graph_features
-        
-        gen_fn = ATTACK_GENERATORS[base_genome["family"]]["attacks_fn"]
-        # Use eval_customers strictly
-        base_attacks_df = gen_fn(base_genome, eval_customers, merchants, request.attack_scale, seed=request.seed)
-        evolved_attacks_df = gen_fn(best_genome, eval_customers, merchants, request.attack_scale, seed=request.seed+1)
-        
+
+        # matched_customer_ids (computed once, above the round loop) feeds
+        # both base and evolved, every round: isolates the genome's effect
+        # from customer-population variance. generate_matched_population_attacks
+        # (not the plain attacks_fn) with a per-(round, base/evolved)
+        # instance_id block guarantees these transaction_ids can never
+        # collide with train_df/test_df's own rows or with any other
+        # round's batch.
+        base_attacks_df = generate_matched_population_attacks(
+            base_genome, eval_customers, merchants, matched_customer_ids,
+            seed=request.seed, instance_id_offset=_cert_instance_id_offset(round_idx, is_evolved=False),
+        )
+        evolved_attacks_df = generate_matched_population_attacks(
+            best_genome, eval_customers, merchants, matched_customer_ids,
+            seed=request.seed + 1, instance_id_offset=_cert_instance_id_offset(round_idx, is_evolved=True),
+        )
+
+        base_tx_ids = set(base_attacks_df["transaction_id"])
+        evolved_tx_ids = set(evolved_attacks_df["transaction_id"])
+        base_leak = base_tx_ids & (train_transaction_ids | test_transaction_ids)
+        evolved_leak = evolved_tx_ids & (train_transaction_ids | test_transaction_ids | seen_evolved_transaction_ids)
+        total_row_leakage += len(base_leak) + len(evolved_leak)
+        seen_evolved_transaction_ids |= evolved_tx_ids
+
         def feature_engineering(attacks_df):
             combined = combine_clean_and_injected(test_df, attacks_df)
             combined = combined.drop_duplicates(subset="transaction_id", keep="last")
@@ -321,7 +385,8 @@ def run_certification(request: CertificationRequest) -> CertificationResult:
         final_evasion < 0.05 and
         final_clean_fpr_delta < 0.01 and
         f1_regression < 0.02 and
-        not regression
+        not regression and
+        total_row_leakage == 0
     )
     
     if gates_passed and len(rounds_record) > 0:
@@ -346,8 +411,8 @@ def run_certification(request: CertificationRequest) -> CertificationResult:
         clean_fpr_delta=final_clean_fpr_delta,
         f1_regression=f1_regression,
         new_weaknesses_found=weaknesses,
-        customer_leakage=0,
-        row_leakage=0,
+        customer_leakage=0,  # real: enforced by the raise above -- never reached if nonzero
+        row_leakage=total_row_leakage,
         reproducibility_checked=True,
         certification_status=cert_status,
         rounds=rounds_record

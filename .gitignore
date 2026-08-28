@@ -12,3 +12,12 @@ scratch_browser/
 .DS_Store
 .env.*
 coverage/
+
+# Mypy
+.mypy_cache/
+
+# Proof texts
+backend/final_proof*.txt
+backend/run_final_proof*.py
+backend/test_rem.py
+verify_ui.py

@@ -9,6 +9,13 @@ import {
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Terminal, ShieldAlert, FileSearch, ArrowRight, Activity, Radar } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import dynamic from "next/dynamic";
+
+// 3D scene needs the browser's WebGL context -- never rendered on the server.
+const ThreatUniverse = dynamic(
+  () => import("@/components/three-d/ThreatUniverse").then((m) => m.ThreatUniverse),
+  { ssr: false, loading: () => <div className="h-[420px] w-full animate-pulse rounded-lg border border-border bg-muted/10" /> },
+);
 
 export default function Home() {
   const [metrics, setMetrics] = useState<MetricsResponse | null>(null);
@@ -124,13 +131,36 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-background p-8 text-foreground">
       <div className="mx-auto max-w-6xl space-y-6">
+        <section className="space-y-1 pt-2">
+          <h1 className="text-4xl font-bold tracking-tight">
+            SENTINEL<span style={{ color: "var(--neon-green)" }}>-X</span>
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            Autonomous Adversarial Payment Defense
+          </p>
+          <p className="max-w-2xl pt-1 text-sm text-muted-foreground/90">
+            A synthetic payment twin where attackers evolve, defenses adapt, and residual risk
+            is measured.
+          </p>
+        </section>
+
+        <section className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Payment Threat Universe
+            </h2>
+            <span className="text-xs text-muted-foreground">Real discovered attack genomes -- Immune Memory</span>
+          </div>
+          <ThreatUniverse />
+        </section>
+
         <header className="flex items-center justify-between border-b border-border pb-4">
           <div>
             <h1 className="text-xl font-semibold tracking-tight">
-              Sentinel-X Command Center
+              Command Center
             </h1>
             <p className="text-sm text-muted-foreground">
-              Autonomous Adversarial Payment Twin
+              Real-time defense status
             </p>
           </div>
           <StatusBadge status={status} />
@@ -174,9 +204,9 @@ export default function Home() {
                   </CardContent>
                 </Card>
                 
-                <Card className="border-[var(--neon-purple)]/50">
+                <Card className="border-[var(--neon-cyan)]/50">
                   <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium text-[var(--neon-purple)]">Active Defense Policies</CardTitle>
+                    <CardTitle className="text-sm font-medium text-[var(--neon-cyan)]">Active Defense Policies</CardTitle>
                   </CardHeader>
                   <CardContent>
                     <div className="text-2xl font-bold">{activePolicies}</div>
@@ -184,12 +214,12 @@ export default function Home() {
                   </CardContent>
                 </Card>
                 
-                <Card className="border-[var(--neon-yellow)]/50">
+                <Card className="border-[var(--neon-amber)]/50">
                   <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium text-[var(--neon-yellow)]">Unknown Clusters</CardTitle>
+                    <CardTitle className="text-sm font-medium text-[var(--neon-amber)]">Unknown Clusters</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="text-2xl font-bold text-muted-foreground">0</div>
+                    <div className="text-2xl font-bold">{radar ? radar.unknown_clusters : "—"}</div>
                   </CardContent>
                 </Card>
               </div>
@@ -253,9 +283,9 @@ export default function Home() {
                       </CardContent>
                     </Card>
                   ) : radar && radar.unknown_clusters > 0 ? (
-                    <Card className="border-[var(--neon-yellow)]/50 bg-[var(--neon-yellow)]/5">
+                    <Card className="border-[var(--neon-amber)]/50 bg-[var(--neon-amber)]/5">
                       <CardHeader>
-                        <CardTitle className="text-[var(--neon-yellow)] font-mono text-base">
+                        <CardTitle className="text-[var(--neon-amber)] font-mono text-base">
                           Zero-Day Radar Findings
                         </CardTitle>
                         <CardDescription>
@@ -281,7 +311,7 @@ export default function Home() {
                             <span className="font-semibold text-xs">{radar.first_seen} &rarr; {radar.last_seen}</span>
                           </div>
                         </div>
-                        <p className="text-xs text-muted-foreground pt-2 border-t border-[var(--neon-yellow)]/20">
+                        <p className="text-xs text-muted-foreground pt-2 border-t border-[var(--neon-amber)]/20">
                           Zero-Day Radar&apos;s real, unsupervised finding over the held-out test set (GET /defense/radar) -- shown here until an adaptive-search attack is discovered and stored to Immune Memory.
                         </p>
                       </CardContent>
@@ -360,16 +390,16 @@ export default function Home() {
             {candidatePolicy && (
               <div className="mt-12 border-t border-border/40 pt-8 space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
                 <h2 className="text-lg font-semibold tracking-tight flex items-center gap-2">
-                  <Terminal className="h-5 w-5 text-[var(--neon-purple)]" />
+                  <Terminal className="h-5 w-5 text-[var(--neon-cyan)]" />
                   COMPILED DEFENSE POLICY
                 </h2>
 
                 <div className="grid md:grid-cols-3 gap-6">
                   {/* Candidate Policy details */}
                   <div className="col-span-1">
-                    <Card className="border-[var(--neon-purple)]/50 bg-[var(--neon-purple)]/5 h-full">
+                    <Card className="border-[var(--neon-cyan)]/50 bg-[var(--neon-cyan)]/5 h-full">
                       <CardHeader>
-                        <CardTitle className="text-[var(--neon-purple)] text-base font-mono">
+                        <CardTitle className="text-[var(--neon-cyan)] text-base font-mono">
                           {candidatePolicy.policy_id}
                         </CardTitle>
                         <CardDescription>Type: {candidatePolicy.policy_type}</CardDescription>
@@ -410,6 +440,9 @@ export default function Home() {
                           <CardTitle className="text-base flex items-center gap-2">
                             COUNTERFACTUAL POLICY TWIN
                           </CardTitle>
+                          <CardDescription className="text-xs italic">
+                            Simulation measurement -- not a production financial-loss estimate.
+                          </CardDescription>
                         </CardHeader>
                         <CardContent className="pt-6">
                           <div className="grid grid-cols-2 gap-8 relative">
@@ -428,32 +461,30 @@ export default function Home() {
                                   <span className="font-bold text-destructive">{(simulation.evasion_before * 100).toFixed(2)}%</span>
                                 </div>
                                 <div className="flex justify-between items-center p-3 rounded bg-muted/20">
-                                  <span className="text-sm text-muted-foreground">Clean FPR</span>
-                                  <span className="font-bold">1.00%</span>
-                                </div>
-                                <div className="flex justify-between items-center p-3 rounded bg-muted/20">
-                                  <span className="text-sm text-muted-foreground">Synthetic Loss Proxy</span>
-                                  <span className="font-bold text-destructive">~$3.19M</span>
+                                  <span className="text-sm text-muted-foreground">Current FPR</span>
+                                  <span className="font-bold">{(metrics.fpr * 100).toFixed(2)}%</span>
                                 </div>
                               </div>
                             </div>
-                            
+
                             {/* After */}
                             <div className="space-y-6">
-                              <h3 className="text-center font-semibold text-[var(--neon-purple)] tracking-wide">CANDIDATE DEFENSE</h3>
-                              
+                              <h3 className="text-center font-semibold text-[var(--neon-cyan)] tracking-wide">CANDIDATE DEFENSE</h3>
+
                               <div className="space-y-4">
-                                <div className="flex justify-between items-center p-3 rounded bg-[var(--neon-purple)]/10 border border-[var(--neon-purple)]/20">
+                                <div className="flex justify-between items-center p-3 rounded bg-[var(--neon-cyan)]/10 border border-[var(--neon-cyan)]/20">
                                   <span className="text-sm text-muted-foreground">Attack Evasion</span>
                                   <span className="font-bold text-[var(--neon-green)]">{(simulation.evasion_after * 100).toFixed(2)}%</span>
                                 </div>
                                 <div className="flex justify-between items-center p-3 rounded bg-muted/20">
-                                  <span className="text-sm text-muted-foreground">Clean FPR</span>
-                                  <span className="font-bold">1.00%</span>
+                                  <span className="text-sm text-muted-foreground">FPR Increase</span>
+                                  <span className="font-bold">{simulation.fpr_increase_pct >= 0 ? "+" : ""}{simulation.fpr_increase_pct.toFixed(2)}%</span>
                                 </div>
                                 <div className="flex justify-between items-center p-3 rounded bg-[var(--neon-green)]/10 border border-[var(--neon-green)]/20">
-                                  <span className="text-sm text-muted-foreground">Synthetic Loss Proxy</span>
-                                  <span className="font-bold text-[var(--neon-green)]">~$0.00</span>
+                                  <span className="text-sm text-muted-foreground">Synthetic Fraud Loss Prevented</span>
+                                  <span className="font-bold text-[var(--neon-green)]">
+                                    &#8377;{simulation.fraud_loss_prevented.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                                  </span>
                                 </div>
                               </div>
                             </div>
@@ -477,7 +508,7 @@ export default function Home() {
                                 Reject Policy
                               </Button>
                               <Button 
-                                className="bg-[var(--neon-purple)] text-white hover:bg-[var(--neon-purple)]/90"
+                                className="bg-[var(--neon-cyan)] text-white hover:bg-[var(--neon-cyan)]/90"
                                 onClick={() => handleApprove("APPROVE")}
                                 disabled={candidatePolicy.status === "ACTIVE" || candidatePolicy.status === "REJECTED"}
                               >
@@ -534,7 +565,7 @@ export default function Home() {
                 {/* Zero Day Radar */}
                 <Card className="border-border">
                   <CardHeader className="pb-2">
-                    <CardTitle className="text-base flex items-center gap-2 text-[var(--neon-yellow)]">
+                    <CardTitle className="text-base flex items-center gap-2 text-[var(--neon-amber)]">
                       <Radar className="h-4 w-4" />
                       UNKNOWN ATTACK RADAR
                     </CardTitle>
@@ -545,7 +576,7 @@ export default function Home() {
                       <div className="space-y-4 mt-4 text-sm">
                         <div className="flex justify-between items-center">
                           <span className="text-muted-foreground">Status</span>
-                          <span className="font-semibold text-[var(--neon-yellow)]">{radar.status}</span>
+                          <span className="font-semibold text-[var(--neon-amber)]">{radar.status}</span>
                         </div>
                         <div className="flex justify-between items-center">
                           <span className="text-muted-foreground">Unknown Clusters</span>
@@ -583,11 +614,7 @@ export default function Home() {
                       </div>
                       <div className="flex justify-between items-center">
                         <span className="text-muted-foreground">Hardened Attacks</span>
-                        <span className="font-semibold">0</span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-muted-foreground">Regression Status</span>
-                        <span className="font-semibold text-[var(--neon-green)]">PASS</span>
+                        <span className="font-semibold">{memory.filter((r) => r.current_status !== "DISCOVERED").length}</span>
                       </div>
                       <div className="p-3 bg-muted/20 border-l-2 border-[var(--neon-blue)] mt-4">
                         <p className="text-xs text-muted-foreground">Immune Memory holds discovered genomes but shows no independent standalone benefit over the primary Defense Policy.</p>

@@ -191,6 +191,7 @@ export default function ObservatoryPage() {
   const [exportGenomeId, setExportGenomeId] = useState("");
   const [isExporting, setIsExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [exportSuccess, setExportSuccess] = useState(false);
 
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -310,9 +311,11 @@ export default function ObservatoryPage() {
     if (!lineage?.run_id || !exportGenomeId) return;
     setIsExporting(true);
     setExportError(null);
+    setExportSuccess(false);
     try {
       const data = await exportGenome(lineage.run_id, exportGenomeId);
       triggerJsonDownload(data, `sentinel-x-threat-intel-${exportGenomeId}.json`);
+      setExportSuccess(true);
     } catch (err) {
       setExportError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -681,28 +684,66 @@ export default function ObservatoryPage() {
                 Run Adaptive Arena first
               </p>
             ) : (
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
-                <div className="flex-1 space-y-1.5">
-                  <label htmlFor="export-genome-select" className="text-sm font-medium text-muted-foreground">
-                    Attack family
-                  </label>
-                  <select
-                    id="export-genome-select"
-                    value={exportGenomeId}
-                    disabled={isExporting || lineage.trajectory.length === 0}
-                    onChange={(e) => setExportGenomeId(e.target.value)}
-                    className="w-full rounded-md border border-border bg-input/30 px-3 py-2 text-sm text-foreground disabled:opacity-50"
-                  >
-                    {uniqueGenomes.map((t) => (
-                      <option key={t.genome_id} value={t.genome_id}>
-                        Generation {t.generation} ({t.genome_id})
-                      </option>
-                    ))}
-                  </select>
+              <div className="space-y-3">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
+                  <div className="flex-1 space-y-1.5">
+                    <label htmlFor="export-genome-select" className="text-sm font-medium text-muted-foreground">
+                      Attack family
+                    </label>
+                    <select
+                      id="export-genome-select"
+                      value={exportGenomeId}
+                      disabled={isExporting || lineage.trajectory.length === 0}
+                      onChange={(e) => {
+                        setExportGenomeId(e.target.value);
+                        setExportSuccess(false);
+                      }}
+                      className="w-full rounded-md border border-border bg-input/30 px-3 py-2 text-sm text-foreground disabled:opacity-50"
+                    >
+                      {uniqueGenomes.map((t) => (
+                        <option key={t.genome_id} value={t.genome_id}>
+                          Generation {t.generation} ({t.genome_id})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <Button onClick={handleExport} disabled={isExporting || lineage.trajectory.length === 0}>
+                    {isExporting ? "Exporting..." : "Export STIX 2.1"}
+                  </Button>
                 </div>
-                <Button onClick={handleExport} disabled={isExporting || lineage.trajectory.length === 0}>
-                  {isExporting ? "Exporting..." : "Export STIX 2.1"}
-                </Button>
+
+                {(() => {
+                  const selected = lineage.trajectory.find((t) => t.genome_id === exportGenomeId);
+                  if (!selected) return null;
+                  return (
+                    <dl className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-md border border-border bg-muted/10 p-3 text-xs sm:grid-cols-4">
+                      <div>
+                        <dt className="text-muted-foreground">Run ID</dt>
+                        <dd className="truncate font-mono">{lineage.run_id}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-muted-foreground">Attack Family</dt>
+                        <dd>{lineage.base_genome_id ?? "-"}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-muted-foreground">Generation</dt>
+                        <dd>{selected.generation}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-muted-foreground">Evasion</dt>
+                        <dd style={{ color: evasionHeatColor(selected.evasion_rate) }}>
+                          {(selected.evasion_rate * 100).toFixed(1)}%
+                        </dd>
+                      </div>
+                    </dl>
+                  );
+                })()}
+
+                {exportSuccess && !isExporting && (
+                  <p className="text-xs font-medium" style={{ color: "var(--neon-green)" }}>
+                    STIX 2.1 intelligence package ready -- download started.
+                  </p>
+                )}
               </div>
             )}
 

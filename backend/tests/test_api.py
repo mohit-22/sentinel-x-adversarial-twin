@@ -49,6 +49,42 @@ def test_simulate_respects_request_overrides(client):
     assert body["transaction_count"] >= 1000
 
 
+# --- Resource-bound hardening (production-readiness audit finding B) ------
+
+
+def test_simulate_rejects_oversized_n_customers(client):
+    """SimulateRequest.n_customers has no scientific meaning above a
+    reasonable demo scale -- this is a resource bound, not a methodology
+    change. 422 (Pydantic validation), never a slow, unbounded 200."""
+    response = client.post("/api/v1/simulate", json={"n_customers": 10_000_000})
+    assert response.status_code == 422
+
+
+def test_simulate_rejects_oversized_n_transactions(client):
+    response = client.post("/api/v1/simulate", json={"n_transactions": 100_000_000})
+    assert response.status_code == 422
+
+
+def test_arena_adaptive_rejects_oversized_population_size(client):
+    response = client.post("/api/v1/arena/adaptive", json={"genome_id": "ATK-MS-001", "population_size": 999_999})
+    assert response.status_code == 422
+
+
+def test_arena_adaptive_rejects_oversized_generations(client):
+    response = client.post("/api/v1/arena/adaptive", json={"genome_id": "ATK-MS-001", "generations": 999_999})
+    assert response.status_code == 422
+
+
+def test_arena_adaptive_rejects_oversized_n_instances(client):
+    response = client.post("/api/v1/arena/adaptive", json={"genome_id": "ATK-MS-001", "n_instances": 10_000_000})
+    assert response.status_code == 422
+
+
+def test_arena_adaptive_rejects_out_of_range_mutation_probability(client):
+    response = client.post("/api/v1/arena/adaptive", json={"genome_id": "ATK-MS-001", "mutation_probability": 5.0})
+    assert response.status_code == 422
+
+
 def _valid_transaction(customer_id="CUST-000000", transaction_id="TEST-TXN-0001"):
     return {
         "transaction_id": transaction_id,

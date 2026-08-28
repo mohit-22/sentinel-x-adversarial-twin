@@ -82,6 +82,53 @@ def test_reproducibility_different_seed():
     assert res1.certification_id != res2.certification_id
     assert res1.rounds[0].evasion_rate != res2.rounds[0].evasion_rate
 
+# --- row_leakage: real computation, not a hardcoded literal (audit finding A) ---
+
+
+def test_row_leakage_is_actually_computed_not_hardcoded(monkeypatch):
+    """Before this fix, CertificationResult.row_leakage was an unconditional
+    literal 0 -- this test proves the gate can genuinely fail by forcing one
+    real collision between an eval-attack transaction_id and a real train_df
+    transaction_id, via the same generate_matched_population_attacks call
+    recursive_engine itself makes (no production leakage-detection code is
+    duplicated here)."""
+    import app.defense.recursive_engine as recursive_engine
+
+    train_df = _APP_STATE["train_df"]
+    collision_id = train_df["transaction_id"].iloc[0]
+
+    real_fn = recursive_engine.generate_matched_population_attacks
+
+    def poisoned_fn(*args, **kwargs):
+        df = real_fn(*args, **kwargs)
+        df = df.copy()
+        df.loc[df.index[0], "transaction_id"] = collision_id
+        return df
+
+    monkeypatch.setattr(recursive_engine, "generate_matched_population_attacks", poisoned_fn)
+
+    req = CertificationRequest(
+        attack_family="micro_structuring", seed=105, rounds=1, generations_per_round=1, population_size=1, attack_scale=10
+    )
+    result = run_certification(req)
+
+    assert result.row_leakage > 0
+    assert result.certification_status != "CERTIFIED"
+
+
+def test_row_leakage_zero_across_multiple_rounds_despite_fixed_base_seed():
+    """base_attacks_df intentionally reuses the same seed every round (a
+    stable baseline probe for fair round-to-round comparison) -- that
+    expected self-repetition must NOT be flagged as leakage. Only genuine
+    collisions with train/test data or with a PRIOR round's evolved_attacks_df
+    should count."""
+    req = CertificationRequest(
+        attack_family="micro_structuring", seed=106, rounds=2, generations_per_round=1, population_size=1, attack_scale=10
+    )
+    result = run_certification(req)
+    assert result.row_leakage == 0
+
+
 def test_no_policy_fabrication():
     req = CertificationRequest(
         attack_family="micro_structuring", seed=104, rounds=1, generations_per_round=1, population_size=1, attack_scale=10

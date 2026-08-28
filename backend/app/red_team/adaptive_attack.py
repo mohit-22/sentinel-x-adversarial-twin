@@ -3,7 +3,7 @@ import random
 import time
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 from app.red_team.immune_memory import MemoryRecord
 from app.red_team.attack_injector import ATTACK_GENERATORS
@@ -12,7 +12,7 @@ from app.blue_team.graph_engine import apply_graph_features
 from app.blue_team.detector import FEATURE_COLUMNS
 from app.blue_team.zero_day import compute_novelty_score
 
-def mutate_genome(genome: Dict, mutation_prob: float = 0.5, generation: int = 0, seed: int = 42, parent_id: str = None) -> Dict:
+def mutate_genome(genome: Dict, mutation_prob: float = 0.5, generation: int = 0, seed: int = 42, parent_id: Optional[str] = None) -> Dict:
     """Mutate a genome's parameters deterministically based on seed/random state.
 
     genome_id is derived from the already-seeded `random` module state

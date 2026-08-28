@@ -219,8 +219,11 @@ export function ArenaView() {
     <div className="min-h-screen bg-background p-8 text-foreground">
       <div className="mx-auto max-w-4xl space-y-6">
         <header className="border-b border-border pb-4">
-          <h1 className="text-xl font-semibold tracking-tight">Adversarial Arena</h1>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: "var(--neon-cyan)" }}>
+            Adversarial Testing Laboratory
+          </p>
+          <h1 className="text-3xl font-bold tracking-tight">Break the Defense</h1>
+          <p className="text-sm text-muted-foreground mt-1">
             Attack finds a gap &rarr; defense hardens &rarr; gap closes
           </p>
         </header>

@@ -592,3 +592,78 @@ export async function approveJudgeScenario(scenarioId: string): Promise<void> {
     throw new ApiError(`Failed to approve scenario: ${response.status}`);
   }
 }
+
+export interface CertificationRequest {
+  attack_family: string;
+  seed?: number;
+  rounds?: number;
+  generations_per_round?: number;
+  population_size?: number;
+  attack_scale?: number;
+}
+
+export interface DefenseRound {
+  certification_id: string;
+  round_number: number;
+  defense_id: string;
+  attack_run_id: string;
+  attack_family: string;
+  evasion_rate: number;
+  precision: number;
+  recall: number;
+  f1: number;
+  fpr: number;
+  clean_fpr_delta: number;
+  novelty: number;
+  impact_score: number;
+  failure_cause: string | null;
+  candidate_defense_id: string | null;
+  new_defense_created: boolean;
+  status: string;
+}
+
+export interface CertificationResult {
+  certification_id: string;
+  status: string;
+  starting_defense_id: string;
+  final_defense_id: string;
+  rounds_completed: number;
+  initial_evasion: number;
+  residual_evasion: number;
+  cumulative_robustness_gain: number;
+  defense_regression: boolean;
+  clean_fpr_delta: number;
+  f1_regression: number;
+  new_weaknesses_found: string[];
+  customer_leakage: number;
+  row_leakage: number;
+  reproducibility_checked: boolean;
+  certification_status: string;
+  rounds: DefenseRound[];
+}
+
+export async function certifyDefense(request: CertificationRequest): Promise<CertificationResult> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/defense/certify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+  } catch {
+    throw new ApiError(
+      `Could not reach backend at ${API_BASE_URL}/defense/certify -- is the server running?`
+    );
+  }
+  if (!response.ok) {
+    let detail = response.statusText;
+    try {
+      const errorBody = await response.json();
+      if (errorBody?.detail) detail = errorBody.detail;
+    } catch {
+      // ignore
+    }
+    throw new ApiError(`POST /defense/certify returned ${response.status}: ${detail}`, response.status);
+  }
+  return (await response.json()) as CertificationResult;
+}

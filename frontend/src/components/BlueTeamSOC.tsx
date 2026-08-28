@@ -120,8 +120,11 @@ export function BlueTeamSOC() {
       <div className="mx-auto max-w-6xl space-y-6">
         <header className="flex items-center justify-between border-b border-border pb-4">
           <div>
-            <h1 className="text-xl font-semibold tracking-tight">Blue Team SOC</h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: "var(--neon-green)" }}>
+              Fraud Investigation Workstation
+            </p>
+            <h1 className="text-3xl font-bold tracking-tight">Blue Team SOC</h1>
+            <p className="text-sm text-muted-foreground mt-1">
               Detection performance and a real, color-coded transaction feed
             </p>
           </div>

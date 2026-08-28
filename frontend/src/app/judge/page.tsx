@@ -12,8 +12,12 @@ import {
   runJudgeScenario, 
   getJudgeScenario, 
   resetJudgeScenario, 
-  approveJudgeScenario 
+  approveJudgeScenario,
+  certifyDefense,
+  CertificationResult,
+  CertificationRequest
 } from "@/lib/api";
+import RecursiveDefenseGraph from "@/components/RecursiveDefenseGraph";
 
 const PROFILES = {
   EASY: {
@@ -68,6 +72,9 @@ export default function JudgeModePage() {
   const [scenarioId, setScenarioId] = useState<string | null>(null);
   const [state, setState] = useState<ScenarioState | null>(null);
   const [approveError, setApproveError] = useState<string | null>(null);
+  const [certResult, setCertResult] = useState<CertificationResult | null>(null);
+  const [isCertifying, setIsCertifying] = useState(false);
+  const [certError, setCertError] = useState<string | null>(null);
   const pollTimer = useRef<NodeJS.Timeout | null>(null);
 
   // Stop polling when unmounted
@@ -139,6 +146,27 @@ export default function JudgeModePage() {
     if (pollTimer.current) clearInterval(pollTimer.current);
   };
 
+  const handleCertify = async () => {
+    setIsCertifying(true);
+    setCertError(null);
+    try {
+      const request: CertificationRequest = {
+        attack_family: family,
+        seed: 42,
+        rounds: 2,
+        generations_per_round: 2,
+        population_size: 3,
+        attack_scale: 20
+      };
+      const res = await certifyDefense(request);
+      setCertResult(res);
+    } catch (err: any) {
+      setCertError(err.message);
+    } finally {
+      setIsCertifying(false);
+    }
+  };
+
   const phases = ["PREPARE", "ATTACK", "DETECT", "ADAPT", "DISCOVER", "ANALYZE", "DEFEND", "SIMULATE", "APPROVE", "REPLAY", "SCORE"];
   const currentPhaseIndex = state 
     ? (state.is_completed ? phases.length : phases.indexOf(state.current_phase)) 
@@ -161,7 +189,10 @@ export default function JudgeModePage() {
         </div>
 
         <header className="border-b border-border pb-4">
-          <h1 className="text-3xl font-bold tracking-tight">Sentinel-X Judge Mode</h1>
+          <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: "var(--neon-cyan)" }}>
+            Launch Adversarial Scenario
+          </p>
+          <h1 className="text-3xl font-bold tracking-tight">Judge Mode</h1>
           <p className="text-muted-foreground mt-1 text-lg">Fraud Cyber Range</p>
         </header>
 
@@ -179,7 +210,7 @@ export default function JudgeModePage() {
                 <div>
                   <label className="text-sm font-medium text-muted-foreground block mb-2">Attack Family</label>
                   <select 
-                    className="w-full bg-background border rounded p-2 text-sm focus:ring-1 focus:ring-[var(--neon-purple)]"
+                    className="w-full bg-background border rounded p-2 text-sm focus:ring-1 focus:ring-[var(--neon-cyan)]"
                     value={family}
                     onChange={(e) => setFamily(e.target.value)}
                     disabled={!!state}
@@ -197,7 +228,7 @@ export default function JudgeModePage() {
                         onClick={() => setProfile(p as any)}
                         disabled={!!state}
                         size="sm"
-                        className={profile === p ? "bg-[var(--neon-purple)]" : ""}
+                        className={profile === p ? "bg-[var(--neon-cyan)]" : ""}
                       >
                         {p}
                       </Button>
@@ -219,7 +250,7 @@ export default function JudgeModePage() {
                 </div>
                 <div className="flex justify-between border-b border-border/50 pb-1">
                   <span className="text-muted-foreground">Zero-Day Radar</span>
-                  <span className={PROFILES[profile].zero_day_radar_enabled ? "text-[var(--neon-yellow)]" : ""}>
+                  <span className={PROFILES[profile].zero_day_radar_enabled ? "text-[var(--neon-amber)]" : ""}>
                     {PROFILES[profile].zero_day_radar_enabled ? "ENABLED" : "DISABLED"}
                   </span>
                 </div>
@@ -257,13 +288,18 @@ export default function JudgeModePage() {
               <CardContent className="py-6">
                 <div className="flex items-center justify-between text-xs font-mono tracking-tighter sm:tracking-normal sm:text-sm text-muted-foreground">
                   {phases.map((p, i) => {
-                    let color = "text-muted-foreground";
-                    if (i < currentPhaseIndex) color = "text-[var(--neon-green)]";
-                    if (i === currentPhaseIndex) color = "text-[var(--neon-purple)] animate-pulse";
+                    const isDone = i < currentPhaseIndex;
+                    const isCurrent = i === currentPhaseIndex;
+                    let color = "text-muted-foreground/50";
+                    if (isDone) color = "text-[var(--neon-green)]";
+                    if (isCurrent) color = "text-[var(--neon-cyan)]";
                     return (
-                      <div key={p} className="flex flex-col items-center gap-1">
-                        <div className={`h-3 w-3 rounded-full ${i <= currentPhaseIndex ? 'bg-current' : 'bg-muted'} ${color}`} />
-                        <span className={color}>{p}</span>
+                      <div key={p} className={`flex flex-col items-center gap-1.5 transition-transform duration-300 ${isCurrent ? "scale-125" : ""}`}>
+                        <div
+                          className={`rounded-full transition-all duration-300 ${isCurrent ? "h-4 w-4 animate-pulse" : "h-3 w-3"} ${i <= currentPhaseIndex ? "bg-current" : "bg-muted"} ${color}`}
+                          style={isCurrent ? { boxShadow: "0 0 10px var(--neon-cyan)" } : undefined}
+                        />
+                        <span className={`${color} ${isCurrent ? "font-bold" : ""}`}>{p}</span>
                       </div>
                     );
                   })}
@@ -300,9 +336,9 @@ export default function JudgeModePage() {
                 )}
 
                 {currentPhaseIndex >= 4 && state.scenario.zero_day_radar_enabled && (
-                  <Card className="border-[var(--neon-yellow)]/50 bg-[var(--neon-yellow)]/5">
+                  <Card className="border-[var(--neon-amber)]/50 bg-[var(--neon-amber)]/5">
                     <CardHeader className="pb-2">
-                      <CardTitle className="text-sm text-[var(--neon-yellow)]">
+                      <CardTitle className="text-sm text-[var(--neon-amber)]">
                         {state.scenario.difficulty === "UNKNOWN" ? "UNKNOWN BEHAVIOUR SURFACED" : "RADAR ANALYSIS"}
                       </CardTitle>
                     </CardHeader>
@@ -330,16 +366,16 @@ export default function JudgeModePage() {
                 )}
 
                 {currentPhaseIndex >= 7 && state.candidate_policy_id && (
-                  <Card className="border-[var(--neon-purple)]/50 bg-[var(--neon-purple)]/5">
+                  <Card className="border-[var(--neon-cyan)]/50 bg-[var(--neon-cyan)]/5">
                     <CardHeader className="pb-2">
-                      <CardTitle className="text-sm text-[var(--neon-purple)] flex items-center gap-2">
+                      <CardTitle className="text-sm text-[var(--neon-cyan)] flex items-center gap-2">
                         <ShieldAlert className="h-4 w-4" /> THE DEFENSE RESPONDED
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
                       <p className="text-sm font-mono text-muted-foreground">{state.candidate_policy_id}</p>
                       
-                      <div className="grid grid-cols-2 gap-4 pt-2 border-t border-[var(--neon-purple)]/20">
+                      <div className="grid grid-cols-2 gap-4 pt-2 border-t border-[var(--neon-cyan)]/20">
                         <div>
                           <p className="text-xs text-muted-foreground">Before Policy</p>
                           <p className="text-lg font-bold text-destructive">{(state.evolved_evasion * 100).toFixed(1)}%</p>
@@ -351,14 +387,14 @@ export default function JudgeModePage() {
                       </div>
 
                       {state.current_phase === "APPROVE" && (
-                        <div className="pt-4 border-t border-[var(--neon-purple)]/20 flex flex-col gap-2">
+                        <div className="pt-4 border-t border-[var(--neon-cyan)]/20 flex flex-col gap-2">
                            {approveError && (
                              <div className="w-full mb-2 p-2 rounded bg-destructive/10 border border-destructive text-destructive text-xs font-semibold flex items-center gap-2">
                                <ShieldAlert className="h-4 w-4" />
                                <span>NOT IMPLEMENTED: {approveError}</span>
                              </div>
                            )}
-                           <Button className="w-full bg-[var(--neon-purple)] text-white hover:bg-[var(--neon-purple)]/90" onClick={handleApprove}>
+                           <Button className="w-full bg-[var(--neon-cyan)] text-white hover:bg-[var(--neon-cyan)]/90" onClick={handleApprove}>
                              APPROVE & RE-ATTACK
                            </Button>
                         </div>
@@ -396,7 +432,7 @@ export default function JudgeModePage() {
                 <CardContent className="p-0">
                   <div className="grid sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-border">
                     <div className="p-6 space-y-4 text-sm">
-                      <h3 className="font-semibold text-[var(--neon-purple)] uppercase tracking-wider text-xs border-b pb-2">Component: Adversarial Evasion</h3>
+                      <h3 className="font-semibold text-[var(--neon-cyan)] uppercase tracking-wider text-xs border-b pb-2">Component: Adversarial Evasion</h3>
                       <div className="flex justify-between"><span className="text-muted-foreground">Initial Evasion</span><span className="font-mono">{(state.scorecard.initial_evasion*100).toFixed(1)}%</span></div>
                       <div className="flex justify-between"><span className="text-muted-foreground">Peak Red Team Evasion</span><span className="font-mono text-destructive">{(state.scorecard.best_evolved_evasion*100).toFixed(1)}%</span></div>
                       <div className="flex justify-between"><span className="text-muted-foreground">Final Post-Policy Evasion</span><span className="font-mono text-[var(--neon-green)] font-bold">{(state.scorecard.evasion_after*100).toFixed(1)}%</span></div>
@@ -427,6 +463,32 @@ export default function JudgeModePage() {
               <span className={state.policy_status === "ACTIVE" ? "text-[var(--neon-green)]" : ""}>{state.policy_status}</span>
               <ArrowRight className="h-3 w-3" />
               <span>{(state.scorecard.total_runtime).toFixed(2)}s Runtime</span>
+            </div>
+            
+            {/* RECURSIVE DEFENSE COMPONENT */}
+            <div className="mt-12 space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-2xl font-bold tracking-tight">DEFENSE-ON-DEFENSE</h2>
+                  <p className="text-muted-foreground mt-1 text-sm">Sentinel-X attacks its own newly created defense.</p>
+                </div>
+                <Button 
+                  onClick={handleCertify} 
+                  disabled={isCertifying}
+                  variant="outline"
+                  className="bg-[var(--neon-cyan)]/10 text-[var(--neon-cyan)] hover:bg-[var(--neon-cyan)]/20 border-[var(--neon-cyan)]"
+                >
+                  {isCertifying ? "Certifying..." : "Run Recursive Certification"}
+                </Button>
+              </div>
+              
+              {certError && (
+                <div className="rounded border border-destructive bg-destructive/10 p-3 text-sm text-destructive font-semibold">
+                  {certError}
+                </div>
+              )}
+              
+              <RecursiveDefenseGraph result={certResult} />
             </div>
           </div>
         )}

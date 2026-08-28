@@ -44,6 +44,19 @@
   --status-live: #39ff88;
   --status-sandbox: #f5c04a;
   --status-error: #ff3b5c;
+
+  /* Network/analytics/informational -- was previously referenced ad hoc as
+     raw Tailwind blue-500/cyan-500 in a couple of components with no
+     backing token (ObservatoryNode's BASE/ELITE accents); formalized here
+     so every page draws from the same palette. */
+  --neon-blue: #3b82f6;
+  --neon-cyan: #22d3ee;
+  --neon-amber: #f5c04a; /* same hue as --status-sandbox: warning and "elite" share one amber semantic by design */
+
+  /* Elevated glass-panel surface, one level above --card, for shell chrome
+     (status bar, nav) that should read as "floating" over the page. */
+  --surface-glass: rgba(18, 20, 23, 0.72);
+  --surface-glass-border: rgba(228, 231, 235, 0.08);
 }
 
 @theme inline {
@@ -71,6 +84,11 @@
   --color-status-live: var(--status-live);
   --color-status-sandbox: var(--status-sandbox);
   --color-status-error: var(--status-error);
+  --color-neon-blue: var(--neon-blue);
+  --color-neon-cyan: var(--neon-cyan);
+  --color-neon-amber: var(--neon-amber);
+  --color-surface-glass: var(--surface-glass);
+  --color-surface-glass-border: var(--surface-glass-border);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -82,4 +100,13 @@
 body {
   background: var(--background);
   color: var(--foreground);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
