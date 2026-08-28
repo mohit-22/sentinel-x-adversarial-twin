@@ -222,7 +222,7 @@ export function ArenaView() {
           <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: "var(--neon-cyan)" }}>
             Adversarial Testing Laboratory
           </p>
-          <h1 className="text-3xl font-bold tracking-tight">Break the Defense</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Adversarial Proving Ground</h1>
           <p className="text-sm text-muted-foreground mt-1">
             Attack finds a gap &rarr; defense hardens &rarr; gap closes
           </p>

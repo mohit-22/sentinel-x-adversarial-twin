@@ -128,7 +128,7 @@ export function RedTeamControls() {
           <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: "var(--neon-red)" }}>
             Offensive Security Laboratory
           </p>
-          <h1 className="text-3xl font-bold tracking-tight">Attack Lab</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Break the Defense</h1>
           <p className="text-sm text-muted-foreground mt-1">
             Attack Genomes &rarr; Adversarial Arena &mdash; discover what M0 misses, then harden it.
           </p>

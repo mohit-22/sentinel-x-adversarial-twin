@@ -465,15 +465,27 @@ export default function JudgeModePage() {
               <span>{(state.scorecard.total_runtime).toFixed(2)}s Runtime</span>
             </div>
             
-            {/* RECURSIVE DEFENSE COMPONENT */}
-            <div className="mt-12 space-y-4">
-              <div className="flex items-center justify-between">
+            {/* RECURSIVE DEFENSE -- hero centerpiece: the defense becomes the
+                next attack target. Distinct container treatment sets it
+                apart from the rest of the page; RecursiveDefenseGraph.tsx
+                itself is reused untouched. */}
+            <div
+              className="relative mt-14 space-y-4 overflow-hidden rounded-xl border p-6"
+              style={{ borderColor: "var(--neon-red)", background: "linear-gradient(135deg, color-mix(in oklch, var(--neon-red) 6%, transparent), color-mix(in oklch, var(--neon-cyan) 4%, transparent))" }}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-4">
                 <div>
-                  <h2 className="text-2xl font-bold tracking-tight">DEFENSE-ON-DEFENSE</h2>
-                  <p className="text-muted-foreground mt-1 text-sm">Sentinel-X attacks its own newly created defense.</p>
+                  <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: "var(--neon-red)" }}>
+                    Recursive Certification
+                  </p>
+                  <h2 className="text-3xl font-bold tracking-tight">Defense-on-Defense</h2>
+                  <p className="mt-1 max-w-xl text-sm text-muted-foreground">
+                    Sentinel-X attacks its own newly created defense.{" "}
+                    <span className="font-semibold text-foreground">The defense becomes the next attack target.</span>
+                  </p>
                 </div>
-                <Button 
-                  onClick={handleCertify} 
+                <Button
+                  onClick={handleCertify}
                   disabled={isCertifying}
                   variant="outline"
                   className="bg-[var(--neon-cyan)]/10 text-[var(--neon-cyan)] hover:bg-[var(--neon-cyan)]/20 border-[var(--neon-cyan)]"
@@ -481,14 +493,16 @@ export default function JudgeModePage() {
                   {isCertifying ? "Certifying..." : "Run Recursive Certification"}
                 </Button>
               </div>
-              
+
               {certError && (
                 <div className="rounded border border-destructive bg-destructive/10 p-3 text-sm text-destructive font-semibold">
                   {certError}
                 </div>
               )}
-              
-              <RecursiveDefenseGraph result={certResult} />
+
+              <div className="rounded-lg border border-border bg-background/60 backdrop-blur-sm">
+                <RecursiveDefenseGraph result={certResult} />
+              </div>
             </div>
           </div>
         )}

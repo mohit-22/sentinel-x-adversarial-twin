@@ -1,6 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ComponentType } from "react";
+
+import { MapPin, Wallet, Smartphone, Users, Fingerprint, GitCompareArrows } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -131,23 +133,46 @@ export function PaymentTwinView() {
           </div>
         )}
 
+        {!data && !error && !isLoading && (
+          <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-muted-foreground/30 py-16 text-center">
+            <Fingerprint className="h-8 w-8 text-muted-foreground/50" />
+            <p className="text-sm font-medium text-muted-foreground">Awaiting a customer lookup</p>
+            <p className="max-w-sm text-xs text-muted-foreground/80">
+              Load a real customer to compare their genuine clean-history behavior against a
+              freshly-generated counterfactual attack instance.
+            </p>
+          </div>
+        )}
+
         {data && (
           <>
-            <Card>
-              <CardHeader>
-                <CardTitle>{data.customer.customer_id}</CardTitle>
+            <Card className="overflow-hidden border-[var(--neon-cyan)]/30">
+              <div className="h-0.5 w-full" style={{ background: "var(--neon-cyan)" }} />
+              <CardHeader className="pb-3">
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                  Customer Profile
+                </p>
+                <CardTitle className="font-mono text-2xl">{data.customer.customer_id}</CardTitle>
               </CardHeader>
               <CardContent>
-                <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-4">
-                  <Field label="Base location" value={data.customer.base_location} />
-                  <Field label="Mean spend" value={`₹${data.customer.mean_spend.toFixed(2)}`} />
-                  <Field label="Primary devices" value={data.customer.primary_devices.join(", ")} />
-                  <Field label="Usual beneficiaries" value={String(data.customer.usual_beneficiaries.length)} />
+                <dl className="grid grid-cols-2 gap-x-4 gap-y-4 text-sm sm:grid-cols-4">
+                  <IconField icon={MapPin} label="Base location" value={data.customer.base_location} />
+                  <IconField icon={Wallet} label="Mean spend" value={`₹${data.customer.mean_spend.toFixed(2)}`} />
+                  <IconField
+                    icon={Smartphone}
+                    label="Primary devices"
+                    value={data.customer.primary_devices.join(", ")}
+                  />
+                  <IconField
+                    icon={Users}
+                    label="Usual beneficiaries"
+                    value={String(data.customer.usual_beneficiaries.length)}
+                  />
                 </dl>
               </CardContent>
             </Card>
 
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <div className="relative grid grid-cols-1 gap-4 lg:grid-cols-2">
               <TransactionColumn
                 title="Normal Behavior"
                 badge="NORMAL"
@@ -162,6 +187,11 @@ export function PaymentTwinView() {
                 accentColor="var(--neon-red)"
                 transactions={data.counterfactual_transactions}
               />
+              <div className="pointer-events-none absolute left-1/2 top-1/2 hidden -translate-x-1/2 -translate-y-1/2 lg:block">
+                <div className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background text-muted-foreground shadow-sm">
+                  <GitCompareArrows className="h-4 w-4" />
+                </div>
+              </div>
             </div>
           </>
         )}
@@ -170,11 +200,22 @@ export function PaymentTwinView() {
   );
 }
 
-function Field({ label, value }: { label: string; value: string }) {
+function IconField({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: ComponentType<{ className?: string }>;
+  label: string;
+  value: string;
+}) {
   return (
-    <div>
-      <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="font-medium">{value}</dd>
+    <div className="flex items-start gap-2">
+      <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--neon-cyan)]" />
+      <div>
+        <dt className="text-xs text-muted-foreground">{label}</dt>
+        <dd className="font-medium">{value}</dd>
+      </div>
     </div>
   );
 }
@@ -209,18 +250,23 @@ function TransactionColumn({
         <p className="text-xs text-muted-foreground">{subtitle}</p>
       </CardHeader>
       <CardContent>
-        <div className="max-h-[480px] space-y-2 overflow-y-auto">
+        <div className="relative max-h-[480px] space-y-2 overflow-y-auto pl-3">
+          <div className="absolute bottom-2 left-[7px] top-2 w-px" style={{ backgroundColor: "var(--border)" }} />
           {sorted.map((t) => {
             const isFraud = "is_fraud" in t && t.is_fraud === 1;
             return (
-              <div
-                key={t.transaction_id}
-                className="rounded-md border p-2.5 text-xs"
-                style={{
-                  borderColor: isFraud ? "var(--neon-red)" : "var(--border)",
-                  backgroundColor: isFraud ? "color-mix(in oklch, var(--neon-red) 8%, transparent)" : undefined,
-                }}
-              >
+              <div key={t.transaction_id} className="relative">
+                <div
+                  className="absolute -left-3 top-3 h-2 w-2 rounded-full ring-2 ring-background"
+                  style={{ backgroundColor: isFraud ? "var(--neon-red)" : accentColor }}
+                />
+                <div
+                  className="rounded-md border p-2.5 text-xs"
+                  style={{
+                    borderColor: isFraud ? "var(--neon-red)" : "var(--border)",
+                    backgroundColor: isFraud ? "color-mix(in oklch, var(--neon-red) 8%, transparent)" : undefined,
+                  }}
+                >
                 <div className="flex items-center justify-between">
                   <span className="font-mono text-muted-foreground">{t.transaction_id}</span>
                   <span className="text-muted-foreground">{formatTime(t.timestamp)}</span>
@@ -240,6 +286,7 @@ function TransactionColumn({
                 </div>
                 <div className="mt-1 text-muted-foreground">
                   {t.merchant_category} &middot; {t.device_id} &middot; &rarr; {t.beneficiary_id}
+                </div>
                 </div>
               </div>
             );

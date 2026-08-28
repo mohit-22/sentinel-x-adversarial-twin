@@ -147,6 +147,15 @@ function Scene({
   );
 }
 
+function LegendRow({ color, label }: { color: string; label: string }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="h-2 w-2 rounded-full" style={{ backgroundColor: color, boxShadow: `0 0 4px ${color}` }} />
+      <span className="text-muted-foreground">{label}</span>
+    </div>
+  );
+}
+
 export function ThreatUniverse() {
   const [records, setRecords] = useState<ImmuneMemoryRecord[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -193,9 +202,17 @@ export function ThreatUniverse() {
       )}
 
       {records !== null && records.length > 0 && (
-        <Canvas camera={{ position: [0, 3, 12], fov: 50 }} dpr={[1, 1.5]}>
-          <Scene records={records} selectedId={selectedId} onSelect={setSelectedId} />
-        </Canvas>
+        <>
+          <Canvas camera={{ position: [0, 3, 12], fov: 50 }} dpr={[1, 1.5]}>
+            <Scene records={records} selectedId={selectedId} onSelect={setSelectedId} />
+          </Canvas>
+          <div className="pointer-events-none absolute right-3 top-3 z-10 flex flex-col gap-1 rounded-md border border-border bg-card/80 p-2 text-[10px] backdrop-blur">
+            <LegendRow color="#ff3b5c" label="Still evasive (>30%)" />
+            <LegendRow color="#f5c04a" label="Partially caught" />
+            <LegendRow color="#39ff88" label="Fully caught" />
+            <LegendRow color="#3b82f6" label="Retired" />
+          </div>
+        </>
       )}
 
       {selected && (
