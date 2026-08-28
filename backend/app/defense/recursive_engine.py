@@ -46,32 +46,19 @@ class CompositeDefenseAdapter:
         self.m0 = m0_model
         self.policies = policies
 
-    def predict(self, X: pd.DataFrame) -> np.ndarray:
+    def predict(self, X: pd.DataFrame, context: Optional[Dict[str, pd.DataFrame]] = None) -> np.ndarray:
         m0_preds = self.m0.predict(X)
 
         if not self.policies:
             return m0_preds
 
-        # Extract full dataframe via call stack to access timestamp/customer_id for policy simulation
-        full_df = X
-        try:
-            frame = sys._getframe(1)
-            if 'fraud_rows' in frame.f_locals:
-                full_df = frame.f_locals['fraud_rows']
-            elif 'clean_test_df' in frame.f_locals:
-                full_df = frame.f_locals['clean_test_df']
-        except Exception:
-            pass
-
-        featured_df = full_df
-        try:
-            frame = sys._getframe(1)
-            if 'featured' in frame.f_locals:
-                featured_df = frame.f_locals['featured']
-            elif 'eval_test_df' in frame.f_locals:
-                featured_df = frame.f_locals['eval_test_df']
-        except Exception:
-            pass
+        # Extract dataframes for policy simulation
+        if context is not None:
+            full_df = context.get('eval_df', X)
+            featured_df = context.get('featured_df', full_df)
+        else:
+            full_df = X
+            featured_df = X
 
         final_caught = m0_preds == 1
         policy_caught_fraud = np.zeros(len(full_df), dtype=bool)
@@ -79,35 +66,34 @@ class CompositeDefenseAdapter:
         for policy in self.policies:
             trigger_mask_featured = apply_policy(featured_df, policy)
             
-            if isinstance(trigger_mask_featured, pd.Series):
+            # Map the mask computed on featured_df back to full_df using index alignment
+            if len(featured_df) != len(full_df):
+                mask_series = pd.Series(trigger_mask_featured, index=featured_df.index)
                 try:
-                    trigger_mask_fraud = trigger_mask_featured.loc[full_df.index].to_numpy()
-                except Exception:
-                    # Fallback if indices mismatch
-                    if 'is_fraud' in featured_df.columns:
-                        trigger_mask_fraud = trigger_mask_featured[featured_df['is_fraud'] == 1].to_numpy()
-                        if len(trigger_mask_fraud) != len(full_df):
-                            trigger_mask_fraud = np.zeros(len(full_df), dtype=bool)
-                    else:
-                        trigger_mask_fraud = trigger_mask_featured.to_numpy()[:len(full_df)]
+                    trigger_mask_fraud = mask_series.loc[full_df.index].to_numpy()
+                except KeyError:
+                    # Fallback if indices are misaligned (should not happen if context is passed correctly)
+                    trigger_mask_fraud = np.zeros(len(full_df), dtype=bool)
             else:
-                if 'is_fraud' in featured_df.columns:
-                    trigger_mask_fraud = trigger_mask_featured[featured_df['is_fraud'] == 1]
-                else:
-                    trigger_mask_fraud = trigger_mask_featured
+                trigger_mask_fraud = np.asarray(trigger_mask_featured)
                 
             policy_caught_fraud = policy_caught_fraud | trigger_mask_fraud
 
         final_caught = final_caught | policy_caught_fraud
         return final_caught.astype(int)
 
-    def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
-        # Dummy proba returning 0.0 or 1.0 for compatibility with evaluate_detector
-        preds = self.predict(X)
-        proba = np.zeros((len(preds), 2))
-        proba[:, 0] = 1.0 - preds
-        proba[:, 1] = preds
-        return proba
+    def predict_proba(self, X: pd.DataFrame, context: Optional[Dict[str, pd.DataFrame]] = None) -> np.ndarray:
+        # Since policy is deterministic (1.0 or 0.0), we max it with the base probability
+        m0_proba = self.m0.predict_proba(X)
+        preds = self.predict(X, context=context)
+        
+        # Where policy caught it, probability is 1.0. Otherwise it's m0_proba
+        for i in range(len(preds)):
+            if preds[i] == 1:
+                m0_proba[i, 1] = 1.0
+                m0_proba[i, 0] = 0.0
+                
+        return m0_proba
 
 
 
@@ -196,18 +182,13 @@ def run_certification(request: CertificationRequest) -> CertificationResult:
             initial_evasion = evasion_rate
             
         # 3. Compute real FPR, F1, Precision, Recall on the evaluation dataset
-        eval_test_df = test_df.copy()
-        
-        # We need these local variables to satisfy the sys._getframe hack in CompositeDefenseAdapter
-        # when we evaluate the adapter directly on clean_test_df.
-        clean_test_df = test_df[test_df["is_fraud"] == 0].copy()
-        
         # M0 baseline metrics
+        clean_test_df = test_df[test_df["is_fraud"] == 0].sort_values(["customer_id", "timestamp"]).reset_index(drop=True).copy()
         m0_clean_preds = m0_model.predict(clean_test_df[FEATURE_COLUMNS])
         m0_fpr = m0_clean_preds.mean() if len(m0_clean_preds) > 0 else 0.0
         
         # Adapter metrics
-        adapter_clean_preds = adapter.predict(clean_test_df[FEATURE_COLUMNS])
+        adapter_clean_preds = adapter.predict(clean_test_df[FEATURE_COLUMNS], context={'eval_df': clean_test_df, 'featured_df': clean_test_df})
         adapter_fpr = adapter_clean_preds.mean() if len(adapter_clean_preds) > 0 else 0.0
         
         clean_fpr_delta = adapter_fpr - m0_fpr
@@ -257,7 +238,7 @@ def run_certification(request: CertificationRequest) -> CertificationResult:
             clean_history=test_df,
             base_genome=base_genome,
             evolved_genome=best_genome,
-            detector=adapter,
+            detector=m0_model,
             features=FEATURE_COLUMNS
         )
         

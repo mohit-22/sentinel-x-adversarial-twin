@@ -87,8 +87,24 @@ def evaluate_detector(model, test_df: pd.DataFrame, feature_columns: List[str] =
     """Real precision/recall/F1/PR-AUC/FPR on the held-out test set."""
     x_test = test_df[feature_columns]
     y_test = test_df["is_fraud"]
-    y_pred = model.predict(x_test)
-    y_proba = model.predict_proba(x_test)[:, 1]
+    import inspect
+    if hasattr(model, 'predict'):
+        sig = inspect.signature(model.predict)
+        if 'context' in sig.parameters:
+            y_pred = model.predict(x_test, context={'eval_df': test_df, 'featured_df': test_df})
+        else:
+            y_pred = model.predict(x_test)
+    else:
+        y_pred = model.predict(x_test)
+        
+    if hasattr(model, 'predict_proba'):
+        sig = inspect.signature(model.predict_proba)
+        if 'context' in sig.parameters:
+            y_proba = model.predict_proba(x_test, context={'eval_df': test_df, 'featured_df': test_df})[:, 1]
+        else:
+            y_proba = model.predict_proba(x_test)[:, 1]
+    else:
+        y_proba = model.predict_proba(x_test)[:, 1]
 
     tn, fp, fn, tp = confusion_matrix(y_test, y_pred).ravel()
     return {

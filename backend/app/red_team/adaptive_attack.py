@@ -144,8 +144,13 @@ def run_evolutionary_search(
                 # desirable outcome, not an error). Compute evasion
                 # directly, same formula and same model.predict() call as
                 # arena.py's own run_attack.
+                import inspect
                 if len(fraud_rows) > 0:
-                    y_pred = model.predict(fraud_rows[feature_columns])
+                    sig = inspect.signature(model.predict)
+                    if 'context' in sig.parameters:
+                        y_pred = model.predict(fraud_rows[feature_columns], context={'eval_df': fraud_rows, 'featured_df': featured})
+                    else:
+                        y_pred = model.predict(fraud_rows[feature_columns])
                     evasion_rate = float(1.0 - y_pred.mean())
                 else:
                     evasion_rate = 0.0
