@@ -15,17 +15,38 @@ actually passes, without executing the real computation. Every OTHER
 execution, not mocked) so the endpoint's real behavior is still exercised.
 """
 
+import time
 from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
 
+import app.api.endpoints as endpoints
+from app.api.endpoints import _APP_STATE
 from app.main import app
+
+
+def _wait_for_app_state(timeout: float = 120.0) -> None:
+    """main.py's lifespan now schedules initialize_app_state() in a
+    background thread (run_in_executor) so uvicorn can bind its port
+    immediately on resource-constrained hosts -- the real fix for a Render
+    free-tier port-scan timeout, since the prior synchronous call blocked
+    the event loop for the entire ~20-60s startup. TestClient's context
+    manager therefore no longer waits for _APP_STATE to be populated before
+    returning, so tests that fire a request right after entering it must
+    explicitly wait for real readiness -- never assume it, never fake it.
+    """
+    deadline = time.time() + timeout
+    while not _APP_STATE:
+        if time.time() > deadline:
+            raise TimeoutError("app state did not become ready within the test timeout")
+        time.sleep(0.5)
 
 
 @pytest.fixture(scope="module")
 def client():
     with TestClient(app) as c:  # triggers the lifespan startup hook once
+        _wait_for_app_state()
         yield c
 
 
@@ -186,13 +207,29 @@ def test_metrics_returns_expected_shape(client):
     assert "latest_arena_run" in body  # present as a key regardless of null/populated
 
 
-def test_metrics_latest_arena_run_is_null_on_fresh_server():
-    """Dedicated fresh TestClient (own startup) so this is NOT affected by
-    other tests' /arena/run calls against the shared `client` fixture --
-    a genuine "no arena run yet this session" check, not order-dependent.
+def test_metrics_latest_arena_run_is_null_on_fresh_server(client):
+    """Genuinely "no arena run yet this session" check, not order-dependent
+    on other tests' /arena/run calls against the shared `client` fixture.
+
+    Previously used a second, independently-constructed TestClient(app) to
+    get a "fresh" process. _LATEST_ARENA_RUN is a module-level global
+    shared by every TestClient in this test process, though -- true
+    process isolation was never really happening, it was just that the old
+    synchronous lifespan made the reset-timing race unobservable. Now that
+    initialize_app_state() runs in a background thread (the real Render
+    port-scan-timeout fix), constructing a second TestClient races a second
+    background initialize_app_state() call against this test's own request,
+    and _wait_for_app_state() can't distinguish "already ready from an
+    earlier test" from "this specific call finished" -- a real, proven
+    flake, not a hypothetical one.
+
+    Directly resetting the one global this test actually cares about is the
+    honest, deterministic way to exercise the real thing being tested: does
+    /metrics report null when no arena run has happened, not whether a
+    second TestClient construction happens to win a race.
     """
-    with TestClient(app) as fresh_client:
-        response = fresh_client.get("/api/v1/metrics")
+    endpoints._LATEST_ARENA_RUN = None
+    response = client.get("/api/v1/metrics")
     assert response.status_code == 200
     assert response.json()["latest_arena_run"] is None
 

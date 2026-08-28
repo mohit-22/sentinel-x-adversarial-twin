@@ -25,7 +25,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.blue_team.detector import FEATURE_COLUMNS, evaluate_detector, run_blue_team_pipeline
-from app.blue_team.explainability import compute_reason_codes, find_cached_feature_row
+from app.blue_team.explainability import compute_counterfactual, compute_reason_codes, find_cached_feature_row
 from app.blue_team.features import combine_clean_and_injected, engineer_features
 from app.blue_team.graph_engine import apply_graph_features
 from app.core.config import N_CUSTOMERS, N_MERCHANTS, N_TRANSACTIONS, SEED, SIMULATION_DAYS
@@ -359,6 +359,27 @@ def explain(transaction_id: str) -> ExplainResponse:
         )
     reason_codes = compute_reason_codes(row, state["model"])
     return ExplainResponse(transaction_id=transaction_id, reason_codes=reason_codes)
+
+
+@router.get("/explain/counterfactual/{transaction_id}")
+def explain_counterfactual(transaction_id: str) -> Dict:
+    """What is the smallest realistic change to this transaction that would
+    have flipped the decision to ALLOW? Same cached-dataset scope as
+    /explain/{transaction_id} -- a 404 for a transaction not in M0's
+    cached train/test set, never a fabricated result.
+    """
+    state = _get_state()
+    row = find_cached_feature_row(transaction_id, state["train_df"], state["test_df"])
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"no cached feature vector for transaction_id {transaction_id!r} -- "
+                "counterfactual explanation today covers M0's original train/test dataset only, "
+                "not transactions generated fresh for other views (e.g. /payment-twin)"
+            ),
+        )
+    return compute_counterfactual(row, state["model"], FEATURE_COLUMNS, state["train_df"])
 
 
 # --- 5. GET /metrics ----------------------------------------------------------

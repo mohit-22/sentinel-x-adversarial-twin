@@ -12,7 +12,9 @@ interface ShapModalProps {
   onClose: () => void;
 }
 
-type ModalTab = "shap" | "soc";
+type ModalTab = "shap" | "soc" | "counterfactual";
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000/api/v1";
 
 function actionColor(action: string): string {
   if (action === "BLOCK") return "var(--neon-red)";
@@ -146,6 +148,171 @@ function SocAgentTab({ transactionId }: { transactionId: string }) {
   );
 }
 
+/** Mirrors backend/app/blue_team/explainability.py's compute_counterfactual
+ * response exactly. counterfactual_decision/minimum_changes_required are
+ * null in the honest "no nearby ALLOW found" case -- never fabricated.
+ */
+interface CounterfactualChange {
+  feature: string;
+  original_value: number;
+  counterfactual_value: number;
+  change: string;
+  plain_english: string;
+}
+interface CounterfactualResponse {
+  transaction_id: string;
+  original_decision: string;
+  counterfactual_decision: string | null;
+  changes_needed: CounterfactualChange[];
+  minimum_changes_required: number | null;
+  status?: string;
+}
+
+/**
+ * Counterfactual tab: real GET /api/v1/explain/counterfactual/{transaction_id}
+ * on first activation (same lazy-fetch-on-tab-select pattern as SocAgentTab --
+ * this samples 1000 points and scores each one, so it shouldn't fire for a
+ * judge who only wants the SHAP tab). Same cached-dataset scope boundary as
+ * /explain itself.
+ */
+function CounterfactualTab({ transactionId }: { transactionId: string }) {
+  const [state, setState] = useState<"loading" | "success" | "not-found-nearby" | "scope-boundary" | "error">(
+    "loading",
+  );
+  const [result, setResult] = useState<CounterfactualResponse | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    setState("loading");
+    let cancelled = false;
+    (async () => {
+      let response: Response;
+      const url = `${API_BASE_URL}/explain/counterfactual/${encodeURIComponent(transactionId)}`;
+      try {
+        response = await fetch(url, { cache: "no-store" });
+      } catch {
+        if (!cancelled) {
+          setState("error");
+          setMessage(`Could not reach backend at ${url} -- is the server running?`);
+        }
+        return;
+      }
+      if (cancelled) return;
+      if (response.status === 404) {
+        setState("scope-boundary");
+        setMessage(
+          "The counterfactual explainer shares /explain's cached-dataset scope: this transaction " +
+            "wasn't in M0's cached train/test set.",
+        );
+        return;
+      }
+      if (!response.ok) {
+        setState("error");
+        setMessage(`GET /explain/counterfactual returned ${response.status}`);
+        return;
+      }
+      const body = (await response.json()) as CounterfactualResponse;
+      if (cancelled) return;
+      if (body.status === "no_nearby_allow_found") {
+        setState("not-found-nearby");
+        setResult(body);
+      } else {
+        setResult(body);
+        setState("success");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [transactionId]);
+
+  if (state === "loading") {
+    return (
+      <p className="text-sm text-muted-foreground">
+        Sampling 1,000 nearby points and scoring each with the real detector...
+      </p>
+    );
+  }
+
+  if (state === "scope-boundary") {
+    return (
+      <div
+        className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground"
+        style={{ borderColor: "var(--status-sandbox)" }}
+      >
+        <p className="font-medium" style={{ color: "var(--status-sandbox)" }}>
+          Outside today&apos;s counterfactual scope
+        </p>
+        <p className="mt-1">{message}</p>
+      </div>
+    );
+  }
+
+  if (state === "error") {
+    return (
+      <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+        {message}
+      </div>
+    );
+  }
+
+  if (state === "not-found-nearby" && result) {
+    return (
+      <div
+        className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground"
+        style={{ borderColor: "var(--neon-red)" }}
+      >
+        <p className="font-medium" style={{ color: "var(--neon-red)" }}>
+          No nearby ALLOW point found
+        </p>
+        <p className="mt-1">
+          None of the 1,000 sampled nearby points crossed the ALLOW threshold -- this transaction&apos;s{" "}
+          {result.original_decision} decision is not the result of a small, easily-reversible feature shift.
+        </p>
+      </div>
+    );
+  }
+
+  if (!result) return null;
+
+  return (
+    <div className="space-y-3 text-sm">
+      <div className="flex items-center gap-2 text-xs">
+        <span
+          className="rounded-md border px-2 py-1 font-bold"
+          style={{ borderColor: "var(--neon-red)", color: "var(--neon-red)" }}
+        >
+          {result.original_decision}
+        </span>
+        <span className="text-muted-foreground">&rarr;</span>
+        <span
+          className="rounded-md border px-2 py-1 font-bold"
+          style={{ borderColor: "var(--neon-green)", color: "var(--neon-green)" }}
+        >
+          {result.counterfactual_decision}
+        </span>
+        <span className="ml-auto text-muted-foreground">
+          {result.minimum_changes_required} feature{result.minimum_changes_required === 1 ? "" : "s"} minimum
+        </span>
+      </div>
+
+      <ul className="space-y-2">
+        {result.changes_needed.map((c) => (
+          <li key={c.feature} className="rounded-md border border-border p-2.5 text-xs">
+            <div className="flex items-center justify-between">
+              <span className="font-mono font-medium">{c.feature}</span>
+              <Badge variant="outline" className="tabular-nums">
+                {c.change}
+              </Badge>
+            </div>
+            <p className="mt-1 text-muted-foreground">{c.plain_english}</p>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 /** Mirrors backend/app/api/endpoints.py's ExplainResponse exactly (Day 8a). */
 interface ReasonCode {
   feature: string;
@@ -227,10 +394,21 @@ export function ShapModal({ transactionId, onClose }: ShapModalProps) {
             >
               SOC Agent Investigation
             </button>
+            <button
+              onClick={() => setTab("counterfactual")}
+              className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                tab === "counterfactual"
+                  ? "border-b-2 border-foreground text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Counterfactual
+            </button>
           </div>
 
           <div className="mt-4 max-h-[60vh] overflow-y-auto">
             {tab === "soc" && transactionId && <SocAgentTab transactionId={transactionId} />}
+            {tab === "counterfactual" && transactionId && <CounterfactualTab transactionId={transactionId} />}
 
             {tab === "shap" && state === "loading" && (
               <p className="text-sm text-muted-foreground">Calling /explain/{transactionId}...</p>
