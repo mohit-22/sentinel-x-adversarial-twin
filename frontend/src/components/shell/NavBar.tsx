@@ -10,6 +10,7 @@ import {
   FlaskConical,
   Gavel,
   Telescope,
+  Map,
 } from "lucide-react";
 
 const NAV_LINKS = [
@@ -20,6 +21,7 @@ const NAV_LINKS = [
   { href: "/arena", label: "Arena", icon: FlaskConical },
   { href: "/judge", label: "Judge Mode", icon: Gavel },
   { href: "/observatory", label: "Threat Observatory", icon: Telescope },
+  { href: "/threat-map", label: "Threat Map", icon: Map },
 ];
 
 export function NavBar() {

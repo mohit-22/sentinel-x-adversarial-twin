@@ -1159,5 +1159,69 @@ def api_defense_certify(request: CertificationRequest) -> CertificationResult:
     """
     if not _APP_STATE:
         raise HTTPException(status_code=503, detail="app state not initialized")
-    
+
     return run_certification(request)
+
+
+@router.get("/threat-map")
+def api_threat_map() -> Dict:
+    """Aggregated fraud-detection data by city, for the Live Threat Map.
+
+    test_df already carries a real `location` field per transaction --
+    engineer_features() only ever adds columns, it never drops the
+    original TransactionBase fields, so no join with clean_history is
+    needed (and joining would be wrong: the injected fraud rows were never
+    in clean_history, so a join would silently lose location for exactly
+    the rows this endpoint cares about most). No risk_score is cached on
+    test_df, so every row is scored live here.
+
+    "Fraud"/"blocked" means the detector's own predicted flag
+    (model.predict()==1) -- the same "caught" convention already used
+    everywhere else in this codebase (arena.py/detector.py), not the
+    ground-truth is_fraud label, which wouldn't be known operationally in
+    a real-time monitoring view.
+    """
+    state = _get_state()
+    test_df = state["test_df"]
+    model = state["model"]
+
+    y_pred = model.predict(test_df[FEATURE_COLUMNS])
+    scored = test_df[["location", "amount"]].copy()
+    scored["_flagged"] = y_pred
+
+    cities = []
+    for city, group in scored.groupby("location"):
+        total = len(group)
+        flagged = int(group["_flagged"].sum())
+        fraud_rate = float(flagged / total) if total > 0 else 0.0
+        amount_blocked = float(group.loc[group["_flagged"] == 1, "amount"].sum())
+
+        if fraud_rate > 0.05:
+            risk_level = "HIGH"
+        elif fraud_rate > 0.02:
+            risk_level = "MEDIUM"
+        else:
+            risk_level = "LOW"
+
+        cities.append(
+            {
+                "city": city,
+                "total_transactions": int(total),
+                "fraud_transactions": flagged,
+                "fraud_rate": round(fraud_rate, 4),
+                "total_amount_blocked_inr": round(amount_blocked, 2),
+                "risk_level": risk_level,
+            }
+        )
+
+    cities.sort(key=lambda c: c["fraud_rate"], reverse=True)
+    total_blocked = sum(c["total_amount_blocked_inr"] for c in cities)
+
+    return {
+        "cities": cities,
+        "summary": {
+            "total_fraud_blocked_inr": round(total_blocked, 2),
+            "highest_risk_city": cities[0]["city"] if cities else None,
+            "cities_monitored": len(cities),
+        },
+    }
