@@ -1,14 +1,17 @@
 # SENTINEL-X
 ### Autonomous Adversarial Payment Defense
 
-Sentinel-X is a synthetic payment twin in which an autonomous red team continuously
-invents fraud attacks against its own defense, an autonomous blue team hardens
-against every attack it discovers, and the system then **attacks its own new
-defense again** — measuring, at every step, exactly how much residual risk is left.
-Nothing here is a static rules engine or a one-shot trained classifier: it is a
-closed loop of attack, detection, root-cause analysis, hardening, and
-re-attack, with every number in the loop coming from a real, reproducible
-computation over a synthetic dataset — never a fabricated demo value.
+Sentinel-X continuously attacks its own payment defense, finds the blind
+spots, hardens the defense, and then **attacks the new defense again** —
+measuring, at every step, exactly how much residual risk is left. It is not
+a static rules engine or a one-shot trained classifier: it is a closed loop
+of attack, detection, root-cause analysis, hardening, and re-attack, and
+every number in this document comes from a real, reproducible computation
+over a synthetic dataset — never a fabricated demo value.
+
+**90.6% F1 · 86.7% Precision · 94.8% Recall · 1.71% FPR · 181 automated tests**
+*(measured live — see [§16 Verified Results](#16-verified-results) and
+[§21 Reproducing the Results](#21-reproducing-the-results))*
 
 | | |
 |---|---|
@@ -21,7 +24,7 @@ computation over a synthetic dataset — never a fabricated demo value.
 
 ---
 
-## The Core Idea
+## Why Sentinel-X
 
 Traditional fraud detection is a single arrow:
 
@@ -52,8 +55,9 @@ defense held, regressed, or produced no measurable improvement at all.
 
 ## 1. Problem Statement
 
-Payment fraud is not static, and the tooling used to justify this project
-treats it that way deliberately:
+Payment fraud is not static, and the attack families this project builds
+are chosen specifically because a fixed rule or a frozen model handles each
+of them badly:
 
 - **Synthetic identities** and **behavioral camouflage** are built to look
   statistically normal until the moment of extraction — a fixed rule
@@ -68,19 +72,16 @@ treats it that way deliberately:
   attackers (or, here, an evolutionary search) discover the specific blind
   spots of that one frozen decision boundary.
 
-Static rules struggle because they don't adapt. Static ML struggles because
-"trained once, deployed forever" is exactly the failure mode a determined
-adversary is optimizing against. The response Sentinel-X proposes is
-**continuous adversarial validation**: never trust a defense you haven't
-already tried to break yourself.
+The response Sentinel-X proposes is **continuous adversarial validation**:
+never trust a defense you haven't already tried to break yourself.
 
-*(General motivation above is qualitative framing, not a measured project
-result. Every specific number later in this document is a real, reproducible
-value from this repository — see [Reproducing the Results](#16-reproducing-the-major-results).)*
+*(This section is qualitative framing, not a measured result. Every
+specific number elsewhere in this document is a real, reproducible value
+from this repository — see [§21](#21-reproducing-the-results).)*
 
 ---
 
-## 2. What Sentinel-X Does
+## 2. System Architecture
 
 ```mermaid
 flowchart LR
@@ -119,20 +120,80 @@ flowchart LR
 ```
 
 Every box above is a real, separately testable Python module in this
-repository (see [Repository Map](#repository-map)). Nothing in this diagram
-is aspirational — the "future work" items are called out explicitly in
-[§19](#19-future-work).
+repository (see [§17 Repository Map](#17-repository-map)). Nothing in this
+diagram is aspirational — anything not yet built is named explicitly in
+[§20 Future Work](#20-future-work).
+
+### Adversarial Loop (detail)
+
+```mermaid
+flowchart LR
+    A[Generate Attack] --> B[Detect]
+    B --> C[Find Blind Spot]
+    C --> D[Harden]
+    D --> E[Re-test on Matched Population]
+    E --> F[Measure Residual Risk]
+    F -.-> A
+```
+
+### Trust Boundary — LLM vs. Decision Engine
+
+```mermaid
+flowchart TB
+    T[Transaction] --> M[LightGBM Detector<br/>deterministic score]
+    M --> D[ALLOW / STEP_UP / REVIEW / BLOCK]
+    M --> S[SHAP Evidence]
+    S --> L[SOC Agent - LLM]
+    L --> V[Hypothesis / Evidence / Action / Audit Log]
+```
+
+The LLM sits strictly downstream of the decision, consuming evidence and
+producing narration — it never has a path back into `D`. See
+[§13 Security & Threat Model](#13-security--threat-model).
 
 ---
 
-## 3. Synthetic Payment Twin
+## 3. 5-Minute Walkthrough
+
+A suggested order for seeing the whole loop live, once both servers are
+running ([§21](#21-reproducing-the-results)):
+
+```
+00:00  Command Center      — global KPIs, LIVE/SANDBOX status
+00:30  Red Team Lab        — pick an attack family, run it against the live model
+01:15  Arena               — trigger hardening, watch evasion rate drop after retrain
+02:00  Blue Team SOC       — color-coded decision feed, click a BLOCK for SHAP + Counterfactual
+02:45  SOC Agent           — ask it to investigate the same flagged transaction
+03:20  Judge Mode          — run the full 11-phase PREPARE→SCORE pipeline in one command
+04:00  Recursive Defense   — certify D0 → D1, watch it attack its own new defense
+04:40  Threat Observatory  — Fraud DNA tree, Economic Impact, STIX export
+05:00  Threat Map          — geographic snapshot of the same evaluation run
+```
+
+Every screen pulls from a real running API call — there is no mock-data
+mode in the frontend.
+
+<!-- Add verified screenshot: Command Center -->
+<!-- Add verified screenshot: Red Team Lab -->
+<!-- Add verified screenshot: Payment Twin -->
+<!-- Add verified screenshot: Blue Team SOC -->
+<!-- Add verified screenshot: Adversarial Arena -->
+<!-- Add verified screenshot: Judge Mode -->
+<!-- Add verified screenshot: Recursive Defense -->
+<!-- Add verified screenshot: Threat Observatory -->
+<!-- Add verified screenshot: Threat Map -->
+
+---
+
+## 4. Synthetic Payment Twin
 
 `backend/app/simulator/clean_generator.py`
 
 A fully synthetic, reproducible payment ecosystem, generated with fixed
-NumPy/Faker seeds so every fresh clone produces byte-identical data:
+NumPy/Faker seeds so every run against the same dependency environment
+produces deterministic data:
 
-- **10,000 customers**, **500 merchants**, **50,000+ transactions** over a
+- **10,000 customers**, **500 merchants**, **50,000 transactions** over a
   30-day simulation window.
 - Each customer has a persistent behavioral profile: income-tier-driven
   log-normal spend distribution, 1–2 primary devices, 3–10 usual merchants,
@@ -151,7 +212,7 @@ payment data anywhere in this repository.
 
 ---
 
-## 4. Feature Engineering & The LightGBM Detector
+## 5. Feature Engineering & The LightGBM Detector
 
 `backend/app/blue_team/features.py`, `graph_engine.py`, `detector.py`
 
@@ -197,12 +258,6 @@ numbers):
 [0.85, 1.00] → BLOCK
 ```
 
-**Measured, reproducible with `seed=42`** (from `GET /api/v1/metrics`
-against the live application — re-run it yourself, it will match): **F1 ≈
-90.6%, precision ≈ 86.7%, recall ≈ 94.8%, FPR ≈ 1.7%**, on a held-out test
-set of ~14,934 transactions. These are the actual numbers this repository
-produces on a fresh run with the default seed — not illustrative figures.
-
 ### Explainability
 
 `backend/app/blue_team/explainability.py`
@@ -217,20 +272,20 @@ engineered feature row, which cannot be recomputed from a bare
   `TreeExplainer` local attributions, in the exact `{feature, contribution,
   description}` shape.
 - **Counterfactual Defender** (`GET /explain/counterfactual/{transaction_id}`)
-  — "what is the smallest realistic change that would have flipped this to
-  ALLOW?" Samples 1,000 nearby points around the transaction's real feature
-  vector, using **median-absolute-deviation-scaled** gaussian noise per
-  feature (a raw standard deviation was tried first and produced nonsensical
-  counterfactuals on heavy-tailed features like `amount_deviation_ratio` —
-  MAD is robust to that), scores every sample with the real cached model,
-  and reports the closest one that crosses the ALLOW threshold plus exactly
-  which features would need to change and by how much. If none of the 1,000
-  samples cross ALLOW, it says so honestly (`"no_nearby_allow_found"`) rather
-  than fabricating a result.
+  — answers "what is the smallest realistic change that would have flipped
+  this to ALLOW?" It samples 1,000 nearby points around the transaction's
+  real feature vector using **median-absolute-deviation-scaled** gaussian
+  noise per feature (a raw standard deviation was tried first and produced
+  nonsensical counterfactuals on heavy-tailed features like
+  `amount_deviation_ratio` — MAD is robust to that), scores every sample
+  with the real cached model, and reports the closest one that crosses the
+  ALLOW threshold plus exactly which features would need to change and by
+  how much. If none of the 1,000 samples cross ALLOW, it says so honestly
+  (`"no_nearby_allow_found"`) rather than fabricating a result.
 
 ---
 
-## 5. Red Team — Five Attack Families
+## 6. Red Team — Five Attack Families
 
 `backend/app/red_team/attack_genomes.py`, `attack_injector.py`
 
@@ -278,7 +333,7 @@ A genuine genetic algorithm over genomes, not a fixed attack list:
 
 ---
 
-## 6. Arena — The Adversarial Hardening Loop
+## 7. Arena — The Adversarial Hardening Loop
 
 `backend/app/red_team/arena.py`
 
@@ -312,11 +367,15 @@ grades its own homework has to actively design against, not assume away.
 `run_multi_family_hardening` extends this to all 5 families at once,
 harvesting hard negatives from every family into a single combined retrain,
 then reporting each family's evasion rate against that one hardened model
-(exposed via `POST /api/v1/arena/multi-family-run`).
+(exposed via `POST /api/v1/arena/multi-family-run`) — the closest thing in
+this repository to a cross-family generalization measurement. A specific
+numeric before/after table per family is **not currently published** in
+this document; re-run the endpoint against your own clone to get one
+(see [§21](#21-reproducing-the-results)).
 
 ---
 
-## 7. Defense Compiler & Policy Simulator
+## 8. Defense Compiler & Policy Simulator
 
 `backend/app/blue_team/defense_compiler.py`, `policy_simulator.py`
 
@@ -341,9 +400,18 @@ same `.predict()`/`.predict_proba()` interface the rest of the system
 already expects — a genome doesn't need to know whether it's attacking a
 raw model or a model-plus-policies stack.
 
+### Why not just retrain?
+
+| Traditional adversarial retraining | Sentinel-X |
+|---|---|
+| Attack → Retrain | Attack → Analyze → Compile Defense → Validate → Attack the new defense → Measure residual risk |
+| Fix is buried in new model weights | Fix is an explicit, human-reviewable `DefensePolicy` |
+| "It should be better now" | FPR/F1 regression gates must pass, or certification fails |
+| One-shot | The new defense is itself re-attacked before being trusted |
+
 ---
 
-## 8. Zero-Day Radar & Immune Memory
+## 9. Zero-Day Radar & Immune Memory
 
 `backend/app/blue_team/zero_day.py`, `red_team/immune_memory.py`
 
@@ -363,29 +431,29 @@ discovered across every run this session — real `genome_id`, `attack_family`,
 explicitly distinguishes memory written during **training** hardening from
 memory written during **evaluation-only** certification rounds — a
 provenance boundary that exists specifically so evaluation-time discoveries
-can never silently leak into what the model is retrained on.
+can never silently leak into what the model is retrained on. Exposed via
+`GET /immune-memory` and visualized in the frontend's 3D "Payment Threat
+Universe" (`components/three-d/ThreatUniverse.tsx`).
 
 ---
 
-## 9. Recursive Defense Certification Engine
+## 10. Recursive Defense Certification Engine
 
 `backend/app/defense/recursive_engine.py`, `schemas.py`
 
 This is the project's sharpest idea: **the defense becomes the next attack
 target.**
 
-```
-D0 (baseline LightGBM)
-   ↓ attack
-weakness found → compile policy
-   ↓
-D1 (D0 + policy)
-   ↓ attack D1
-weakness found (or NO NEW DEFENSE GENERATED, honestly)
-   ↓
-D2 (or certification stops here)
-   ↓
-CERTIFICATION RESULT
+```mermaid
+flowchart TB
+    D0[D0 - baseline LightGBM] -->|attack| W0[Weakness found]
+    W0 --> P0[Compile Policy]
+    P0 --> D1[D1 = D0 + Policy]
+    D1 -->|attack D1| W1{Weakness found?}
+    W1 -->|yes, evasion > 5%| P1[Compile Policy] --> D2[D2 = D1 + Policy]
+    W1 -->|no| NN[NO_NEW_DEFENSE_GENERATED]
+    D2 --> CERT[Certification Result]
+    NN --> CERT
 ```
 
 Each round runs the real evolutionary search against the *current*
@@ -416,21 +484,42 @@ comments:**
   evolved attack's evasion doesn't clear the 5% bar, the engine reports
   exactly that instead of inventing a policy to fill the response shape.
 
+### Failure is a first-class result
+
+Sentinel-X is built to fail honestly rather than always report a win. Real
+terminal/negative states that exist in the code today, not hypothetically:
+
+- `certification_status: "FAILED"` — an F1 or FPR regression gate was
+  actually tripped.
+- `NO_NEW_DEFENSE_GENERATED` — the attacker couldn't find a meaningful new
+  weakness in the current defense.
+- `evasion_note` in Judge Mode's Scorecard — peak evolved evasion turned out
+  indistinguishable from baseline (a "robust defense" finding).
+- `"no_nearby_allow_found"` — the Counterfactual Defender found no sample
+  within 1,000 draws that crossed ALLOW.
+- `501` on `/defense/analyze-attack` for an unpersisted historical genome,
+  rather than a fabricated analysis.
+
+None of these are bugs; they are the system refusing to manufacture a
+success it can't back with a real computation.
+
 Exposed via `POST /api/v1/defense/certify`, visualized in the frontend by
 `RecursiveDefenseGraph.tsx` — a real node-link diagram over the actual
 `DefenseRound` sequence returned by the API, never a fabricated D2.
 
 ---
 
-## 10. Judge Mode — The Fraud Cyber Range
+## 11. Judge Mode — The Fraud Cyber Range
 
 `backend/app/judge/`, frontend `app/judge/page.tsx`
 
 An 11-phase, single-command orchestration of nearly the entire system, built
 specifically so a judge can watch the whole story unfold in one run:
 
-```
-PREPARE → ATTACK → DETECT → ADAPT → DISCOVER → ANALYZE → DEFEND → SIMULATE → APPROVE → REPLAY → SCORE
+```mermaid
+flowchart LR
+    P1[PREPARE] --> P2[ATTACK] --> P3[DETECT] --> P4[ADAPT] --> P5[DISCOVER]
+    P5 --> P6[ANALYZE] --> P7[DEFEND] --> P8[SIMULATE] --> P9[APPROVE] --> P10[REPLAY] --> P11[SCORE]
 ```
 
 Each phase calls existing, already-independently-tested service functions
@@ -440,12 +529,11 @@ and an optional human-approval gate before the final replay/score. The
 closing `Scorecard` reports initial/best-evolved/final evasion, robustness
 gain, F1/FPR, unknown-detection rate and cluster count, policy status, and
 an honest `evasion_note` when peak evolved evasion turns out to be
-genuinely indistinguishable from the baseline (a real "robust defense"
-finding, not something the display quietly papers over).
+genuinely indistinguishable from the baseline.
 
 ---
 
-## 11. Autonomous SOC Agent
+## 12. Autonomous SOC Agent
 
 `backend/app/blue_team/soc_agent.py`
 
@@ -464,7 +552,32 @@ verdict. Exposed via `POST /api/v1/soc/investigate/{transaction_id}`.
 
 ---
 
-## 12. Threat Observatory
+## 13. Security & Threat Model
+
+- **The LLM is never the decision-maker.** Every ALLOW/STEP_UP/REVIEW/BLOCK
+  decision is deterministic LightGBM + engineered features. The LLM (Groq)
+  only ever produces structured attack-genome JSON (Judge Sandbox) or
+  narrated evidence over evidence it's handed (SOC Agent) — see the trust
+  boundary diagram in [§2](#2-system-architecture).
+- **Attacker model** (within this synthetic sandbox): can construct or
+  mutate any transaction pattern the 5 attack genomes and their
+  constraint-validated mutations allow, and can adaptively search for
+  evasive variants against the live model via the evolutionary search.
+  Cannot: read model weights directly, modify backend code or state from
+  outside the API, or access the `GROQ_API_KEY` (server-side only, never
+  exposed to the frontend bundle).
+- **Data assumptions:** the Payment Twin is 100% synthetic; certification
+  and evaluation always run against isolated held-out populations, checked
+  for customer- and row-level leakage in code (see
+  [§10](#10-recursive-defense-certification-engine)).
+- **Secrets:** exactly one — `GROQ_API_KEY` — loaded server-side only via
+  `python-dotenv`, never placed in a `NEXT_PUBLIC_*` variable.
+- **CORS:** the backend's allowed-origins list is extended by one optional
+  `FRONTEND_ORIGIN` environment variable, never a wildcard.
+
+---
+
+## 14. Threat Observatory
 
 `backend/app/api/endpoints.py` (`/observatory/*`), frontend `app/observatory/`
 
@@ -484,48 +597,78 @@ Three real, API-backed views over the adaptive search's own output:
 - **STIX 2.1 Export** — a real, spec-shaped `bundle`/`attack-pattern`
   object built as a plain Python dict (no new dependency), with
   deterministic hash-derived IDs so exporting the same genome from the same
-  run twice produces byte-identical output.
+  run twice produces byte-identical output. Representative excerpt of the
+  actual shape produced by `POST /observatory/export`:
+
+  ```json
+  {
+    "type": "bundle",
+    "id": "bundle--<deterministic-hash>",
+    "objects": [
+      {
+        "type": "attack-pattern",
+        "id": "attack-pattern--<deterministic-hash>",
+        "name": "ATK-MS-001",
+        "x_sentinel_attack_family": "micro_structuring"
+      }
+    ]
+  }
+  ```
 
 ---
 
-## 13. What Makes Sentinel-X Different
+## 15. Threat Intelligence Map
 
-- The LLM never touches a fraud score. Every ALLOW/STEP_UP/REVIEW/BLOCK
-  decision is deterministic, auditable LightGBM + engineered features —
-  the LLM only ever produces structured genome JSON or narrated evidence
-  over evidence it's given.
-- Mutations are constraint-validated against realistic bounds, not naive
-  perturbations that would produce physically impossible transactions.
-- The evaluation methodology actively defends against its own
-  self-grading risk: matched populations to isolate the retraining effect
-  from customer-sampling variance, customer- and row-level leakage checks
-  enforced with hard runtime assertions (not just documentation), and
-  regression gates that can and do fail a certification.
-- The system doesn't just harden once — it re-attacks its own new defense
-  and reports `NO_NEW_DEFENSE_GENERATED` honestly when nothing further is
-  found, rather than fabricating a second win.
+`GET /api/v1/threat-map`, frontend `app/threat-map/page.tsx`
 
----
-
-## 14. What Is Actually Implemented Today
-
-Everything described in §3–§12 above is real, working code in this
-repository, exercised by the 181-test automated suite (see
-[§16](#16-reproducing-the-major-results)). Nothing in those sections is
-aspirational.
-
-What is explicitly **not** implemented (see [§19](#19-future-work) for the
-full list): a persistence layer for arbitrary evolved-genome lookups by ID
-(`/defense/analyze-attack` is an honest `501` stub for this reason), a
-database/queue-backed multi-user deployment, real voice/video generation
-(deliberately out of scope — this attack family is metadata-only by
-design, not an unfinished feature), and dependency-version pinning in
-`requirements.txt` (currently unpinned — a known reproducibility risk, not
-yet fixed).
+A geographic view over the **current Payment Twin evaluation snapshot** —
+not a live banking network. The backend scores the cached test set with the
+live model, groups by `location`, and returns per-city `total_transactions`,
+`fraud_rate`, `total_amount_blocked_inr`, and a `risk_level`
+(`HIGH`/`MEDIUM`/`LOW`, thresholded at 5%/2% fraud rate). The frontend plots
+the subset of cities with known fixed lat/long coordinates on a simple
+proportional grid (not a real map projection or GIS library — React 19 is
+incompatible with `react-simple-maps`' peer dependencies, so this is a
+deliberate fallback, not an unfinished feature), sized by transaction
+volume and colored by risk level, plus a ranked Top-5-riskiest-cities panel.
+Every number on the page traces back to the same `/threat-map` call — none
+of it is randomly positioned or fabricated.
 
 ---
 
-## 15. Repository Map
+## 16. Verified Results
+
+All values below were produced by running the commands in
+[§21](#21-reproducing-the-results) against this repository with the default
+`seed=42`, not copied from a slide. Where a metric is not currently
+measured in this repository, it is marked as such rather than estimated.
+
+| Metric | Value |
+|---|---|
+| Customers | 10,000 |
+| Merchants | 500 |
+| Transactions | 50,000 |
+| Simulation window | 30 days |
+| Detector | LightGBM, `n_estimators=200`, `num_leaves=31` |
+| Test set size | 14,934 |
+| Precision | 86.7% |
+| Recall | 94.8% |
+| F1 | 90.6% |
+| PR-AUC | 96.5% |
+| FPR | 1.71% |
+| Automated tests | 181, `pytest` |
+| `/detect` latency | **Not currently measured** in this document — run `curl -w` against your own instance |
+| Cross-family generalization matrix | **Not currently published** — re-run `POST /arena/multi-family-run` (see [§7](#7-arena--the-adversarial-hardening-loop)) |
+| Judge Mode Scorecard total | Varies per run/attack family by design — read from the live `POST /judge/scenario/{id}/run` response |
+
+*(This table intentionally omits any number this session did not itself
+verify against a live run. A prior draft of this document cited "50,000+"
+transactions and implied byte-identical output across arbitrary
+environments; both are corrected here — see [§19](#19-current-limitations).)*
+
+---
+
+## 17. Repository Map
 
 ```
 MasterCard_AI_project_/
@@ -551,9 +694,136 @@ MasterCard_AI_project_/
         └── lib/api.ts                # Typed API client
 ```
 
+### API Surface
+
+The full route table, generated from `backend/app/api/endpoints.py`
+(all under `/api/v1`):
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/simulate` | POST | Generate the synthetic Payment Twin dataset |
+| `/detect` | POST | Score a batch of transactions |
+| `/metrics` | GET | Global detector metrics |
+| `/explain/{transaction_id}` | GET | SHAP top-3 reason codes |
+| `/explain/counterfactual/{transaction_id}` | GET | Counterfactual Defender |
+| `/payment-twin/{customer_id}` | GET | One customer's real history + a counterfactual attack instance |
+| `/sandbox/compile` | POST | Judge Sandbox: free text → validated genome → live simulation |
+| `/arena/run` | POST | Full adversarial loop for one attack family |
+| `/arena/multi-family-run` | POST | Combined hard-negative hardening across all 5 families |
+| `/arena/adaptive` | POST | Adaptive evolutionary search run |
+| `/immune-memory` | GET | Accumulated discovered-genome record |
+| `/zero-day/scan` | POST | Zero-Day Radar scan |
+| `/defense/radar` | GET | Zero-Day Radar summary |
+| `/defense/evolution` | GET | Adaptive search generation history |
+| `/defense/compile` | POST | Compile a `DefensePolicy` from an analyzed attack |
+| `/defense/simulate` | POST | Estimate a policy's real before/after utility |
+| `/defense/policies` | GET | List compiled policies |
+| `/defense/approve` | POST | Human-approval gate for a policy |
+| `/defense/analyze-attack` | POST | Root-cause analysis (honest `501` — see [§19](#19-current-limitations)) |
+| `/defense/certify` | POST | Run the Recursive Defense Certification Engine |
+| `/observatory/lineage` | GET | Fraud DNA evolution tree |
+| `/observatory/impact` | GET | Economic Impact estimate |
+| `/observatory/export` | POST | STIX 2.1 export |
+| `/soc/investigate/{transaction_id}` | POST | SOC Agent investigation |
+| `/judge/scenario` | POST | Create a Judge Mode scenario |
+| `/judge/scenario/{id}` | GET | Read scenario state |
+| `/judge/scenario/{id}/run` | POST | Run the 11-phase pipeline |
+| `/judge/scenario/{id}/approve` | POST | Approve the pending policy mid-run |
+| `/judge/scenario/{id}/reset` | POST | Reset a scenario |
+| `/threat-map` | GET | Geographic evaluation-snapshot aggregation |
+
+### Frontend Routes
+
+| Route | Screen |
+|---|---|
+| `/` | Command Center |
+| `/red-team` | Red Team Lab |
+| `/payment-twin` | Payment Twin |
+| `/blue-team-soc` | Blue Team SOC |
+| `/arena` | Adversarial Arena |
+| `/judge` | Judge Mode |
+| `/observatory` | Threat Observatory |
+| `/threat-map` | Threat Intelligence Map |
+
 ---
 
-## 16. Reproducing the Major Results
+## 18. What Makes Sentinel-X Different
+
+| Typical fraud system | Sentinel-X |
+|---|---|
+| Detects known fraud patterns | Evolves new attacks against itself |
+| Static rules or a frozen model | Continuous adversarial hardening loop |
+| One-time evaluation | Re-attacks every new defense before trusting it |
+| Black-box risk score | SHAP + Counterfactual Defender on every decision |
+| No coverage for unknown patterns | Zero-Day Radar (unsupervised, label-independent) |
+| No memory across runs | Immune Memory with training/evaluation provenance |
+| No attack lineage | Fraud DNA evolution tree (`parent_attack_id`, generations) |
+| Retrain-and-hope | D0 → D1 certification: attack the new defense, gate on regression |
+
+---
+
+## 19. Current Limitations
+
+Stated plainly, not hidden in a footnote:
+
+- **Synthetic data only.** Every number in this document describes
+  behavior on a synthetic twin. No claim is made, implied, or should be
+  inferred about performance on real production payment data.
+- **Determinism is scoped to a fixed dependency environment.** Fixed
+  NumPy/Faker seeds make output reproducible given the same package
+  versions this project was developed against — because `requirements.txt`
+  is unpinned (see below), a different resolved dependency set is not
+  guaranteed to reproduce output byte-for-byte.
+- **Single-process, in-memory state.** `_APP_STATE` and the various
+  "latest run" caches are process-global. Concurrent requests are
+  individually correct, but a second concurrent run can overwrite what an
+  unrelated earlier caller is still reading from a shared cache — an
+  accepted, disclosed limitation of a single-instance hackathon
+  deployment, not a hidden bug.
+- **Voice/video authorization is metadata-only** by explicit design — no
+  real audio or video is generated or analyzed anywhere in this system.
+- **`requirements.txt` is unpinned.** A fresh install could in principle
+  resolve different dependency versions than the ones this repository was
+  developed and tested against.
+- **`/defense/analyze-attack` is an honest `501`** — it requires a
+  persistence layer for arbitrary evolved-genome-to-transactions lookup by
+  ID that does not yet exist, rather than reimplementing the logic
+  narrowly just to return *something*.
+- **Threat Intelligence Map is a positioned scatter, not a real map
+  projection or GIS library** (see [§15](#15-threat-intelligence-map)).
+- Model latency, memory footprint under real concurrent load, and a
+  numeric cross-family generalization matrix are **not currently measured**
+  in this document — the endpoints exist; re-run them yourself
+  ([§21](#21-reproducing-the-results)) for current numbers.
+
+These are hackathon-scope limitations, not a claim that the architecture
+itself doesn't scale — see [§20](#20-future-work) for the named,
+explicitly-out-of-scope production directions.
+
+---
+
+## 20. Future Work
+
+Named explicitly here so it is never confused with what's already built:
+
+- Persisted, queryable storage for arbitrary past evolved genomes (unblocks
+  `/defense/analyze-attack` for any historical run, not just the most
+  recent one).
+- Dependency-version pinning for reproducible builds.
+- Multi-instance/shared-state deployment (a real database or cache layer,
+  only if a genuine multi-user scaling need is proven — not added
+  speculatively).
+- A real map projection/GIS library for the Threat Intelligence Map, once
+  a React-19-compatible option exists.
+- A 6th attack family, additional LLM providers, reinforcement-learning-based
+  attack search, GNN-based graph features, and a production-grade feature
+  store are all explicitly **out of scope for this submission** and named
+  only as possible production-scale-up directions, not partially-built
+  features.
+
+---
+
+## 21. Reproducing the Results
 
 ```bash
 # Backend
@@ -589,12 +859,12 @@ cd backend
 PYTHONPATH=. python3 -m pytest tests/ -q
 ```
 
-Every number this README cites in §4 was produced by literally running the
-commands above against this repository, not copied from a slide.
+Every number this README cites in §16 was produced by literally running the
+commands above against this repository.
 
 ---
 
-## 17. Deployment
+## 22. Deployment
 
 The intended architecture is deliberately simple for a hackathon-scale
 free-tier deployment:
@@ -605,70 +875,17 @@ Vercel (frontend, Next.js)  →  HTTPS  →  Render (backend, FastAPI, free web 
 
 - **Backend (Render)**: Root directory `backend`, build `pip install -r
   requirements.txt`, start `uvicorn app.main:app --host 0.0.0.0 --port
-  $PORT`. `initialize_app_state()` runs in a background thread
+  $PORT`. Startup initialization runs off the event loop
   (`loop.run_in_executor`) specifically so the port binds immediately —
-  Render's free-tier port scanner has a shorter timeout than the
-  synchronous dataset-generation-plus-training startup this app used to
-  block on, and that mismatch was a real, diagnosed production incident
-  during this project's own deployment (fixed by moving initialization off
-  the event loop, not by faking readiness).
+  Render's free-tier port scanner times out faster than the
+  dataset-generation-plus-training startup would otherwise take.
 - **Frontend (Vercel)**: Root directory `frontend`, environment variable
-  `NEXT_PUBLIC_API_BASE_URL` pointed at the deployed Render URL (already a
-  supported, existing mechanism in `lib/api.ts` — not added as a deployment
-  afterthought).
+  `NEXT_PUBLIC_API_BASE_URL` pointed at the deployed Render URL.
 - **CORS**: the backend's allowed-origins list is extended by one optional
   `FRONTEND_ORIGIN` environment variable, defaulting to local-dev-only
   behavior when unset — never a wildcard.
 - **Secrets**: exactly one — `GROQ_API_KEY` — loaded server-side only via
-  `python-dotenv`, never exposed to the frontend bundle, never placed in a
-  `NEXT_PUBLIC_*` variable.
-
----
-
-## 18. Limitations
-
-Stated plainly, not hidden in a footnote:
-
-- **Synthetic data only.** Every number in this document describes
-  behavior on a synthetic twin. No claim is made, implied, or should be
-  inferred about performance on real production payment data.
-- **Single-process, in-memory state.** `_APP_STATE` and the various
-  "latest run" caches are process-global. Concurrent requests are
-  individually correct, but a second concurrent run can overwrite what an
-  unrelated earlier caller is still reading from a shared cache — an
-  accepted, disclosed limitation of a single-instance hackathon
-  deployment, not a hidden bug.
-- **Voice/video authorization is metadata-only** by explicit design — no
-  real audio or video is generated or analyzed anywhere in this system.
-- **`requirements.txt` is unpinned.** A fresh install could in principle
-  resolve different dependency versions than the ones this repository was
-  developed and tested against.
-- **`/defense/analyze-attack` is an honest `501`** — it requires a
-  persistence layer for arbitrary evolved-genome-to-transactions lookup by
-  ID that does not yet exist, rather than reimplementing the logic
-  narrowly just to return *something*.
-- Model latency, memory footprint under real concurrent load, and
-  dependency-pinned reproducibility across environments are **not
-  currently measured** in this repository.
-
----
-
-## 19. Future Work
-
-Named explicitly here so it is never confused with what's already built:
-
-- Persisted, queryable storage for arbitrary past evolved genomes (unblocks
-  `/defense/analyze-attack` for any historical run, not just the most
-  recent one).
-- Dependency-version pinning for reproducible builds.
-- Multi-instance/shared-state deployment (a real database or cache layer,
-  only if a genuine multi-user scaling need is proven — not added
-  speculatively).
-- A 6th attack family, additional LLM providers, reinforcement-learning-based
-  attack search, GNN-based graph features, and a production-grade feature
-  store are all explicitly **out of scope for this submission** and named
-  only as possible production-scale-up directions, not partially-built
-  features.
+  `python-dotenv`, never exposed to the frontend bundle.
 
 ---
 
