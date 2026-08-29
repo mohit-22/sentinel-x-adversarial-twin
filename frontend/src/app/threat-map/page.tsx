@@ -122,9 +122,9 @@ export default function ThreatMapPage() {
           <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: "var(--neon-cyan)" }}>
             Threat Intelligence
           </p>
-          <h1 className="text-3xl font-bold tracking-tight">Live Threat Intelligence Map</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Threat Intelligence Map</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Real-time fraud detection across India&apos;s UPI network
+            Current Payment Twin evaluation snapshot
           </p>
         </header>
 
@@ -199,7 +199,7 @@ export default function ThreatMapPage() {
                               Fraud rate: <span className="font-medium text-foreground">{(c.fraud_rate * 100).toFixed(1)}%</span>
                             </p>
                             <p className="text-muted-foreground">
-                              Amount blocked: <span className="font-medium text-foreground">{formatInr(c.total_amount_blocked_inr)}</span>
+                              Amount flagged: <span className="font-medium text-foreground">{formatInr(c.total_amount_blocked_inr)}</span>
                             </p>
                           </div>
                         )}
@@ -219,7 +219,7 @@ export default function ThreatMapPage() {
             <div className="space-y-4 lg:col-span-3">
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Total Fraud Blocked</CardTitle>
+                  <CardTitle className="text-sm font-medium text-muted-foreground">Model-Flagged Fraud Value</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <p className="text-2xl font-bold tabular-nums" style={{ color: "var(--neon-green)" }}>
