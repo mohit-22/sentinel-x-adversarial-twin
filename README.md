@@ -81,6 +81,82 @@ from this repository — see [§21](#21-reproducing-the-results).)*
 
 ---
 
+## How Sentinel-X Runs
+
+Two different questions look similar but aren't: **what order does the
+system actually execute in**, and **what order should a judge click
+through the demo in**. This section answers the first; [§3](#3-5-minute-walkthrough)
+answers the second.
+
+```mermaid
+flowchart TB
+    subgraph S["Startup — runs once, automatically, per process start"]
+        direction TB
+        PT[Payment Twin generated<br/>customers + merchants + clean transactions]
+        BI[Baseline attack injected<br/>micro_structuring only, to create initial fraud labels]
+        FE[Feature engineering<br/>vectorized, train/test customer-grouped split]
+        D0[LightGBM D0 trained<br/>+ Zero-Day Radar trained on train_df]
+        PT --> BI --> FE --> D0
+    end
+
+    subgraph O["On-demand — triggered independently via API/UI, any order, D0 already exists"]
+        direction TB
+        RT[Red Team: any of 5 attack families] --> BT[Blue Team detects<br/>+ SHAP + Counterfactual + SOC Agent]
+        AR[Arena: harvest hard negatives<br/>→ retrain → re-test] --> DVER[Updated detector]
+        DC[Defense Compiler: analyze_attack<br/>→ compile_policy] --> PS[Policy Simulator:<br/>estimate before/after utility]
+        RD["Recursive Defense Certification<br/>(D0 → attack → policy → D1 → attack D1 → gates)"]
+        OBX[Threat Observatory / Economic Impact / STIX<br/>reads whatever run already happened]
+        TM[Threat Map: reads current test_df + live model]
+    end
+
+    D0 --> RT
+    D0 --> AR
+    D0 --> RD
+    D0 --> TM
+    BT -.evidence.-> DC
+    PS -.policy.-> RD
+    AR -.discovered genomes.-> OBX
+    RD -.discovered genomes.-> OBX
+
+    JM["Judge Mode<br/>(orchestration layer over the boxes above)"]
+    D0 -.-> JM
+```
+
+Three things this diagram is careful to get right:
+
+- **Startup is a strict pipeline; everything after it is not.** Red Team,
+  Arena, the Defense Compiler, Recursive Defense, and Threat Map are each
+  independently callable once `D0` exists — none of them requires another
+  one of them to have run first, and there is no single canonical order
+  the application enforces.
+- **Judge Mode is an orchestration layer, not a prerequisite stage.** It
+  calls the same underlying service functions as the boxes above, in
+  sequence, inside one API call ([§11](#11-judge-mode--the-fraud-cyber-range)).
+  Running it is not a requirement for using Red Team, Arena, or Recursive
+  Defense manually, and using those manually is not a requirement for
+  running Judge Mode.
+- **Threat Observatory and Threat Map are observability layers**, not
+  processing stages — they read and present whatever Immune Memory / model
+  state already exists rather than producing new attacks or defenses
+  themselves.
+
+### Recursive Certification lifecycle (summary)
+
+```
+D0 (baseline) → attack D0 → weakness found → compile DefensePolicy
+   → D1 = D0 + policy → attack D1 → gates checked
+   → CERTIFIED, or FAILED (regression/leakage), or NO_NEW_DEFENSE_GENERATED
+```
+
+`D1` exists only when a real `DefensePolicy` was actually compiled from a
+meaningful (>5%) evasion; a second round attacks the *current* composite
+defense, not a replay of round one. See
+[§10](#10-recursive-defense-certification-engine) for the full diagram and
+the exact gating logic — this summary exists only to place certification in
+the overall execution order above, not to duplicate that section.
+
+---
+
 ## 2. System Architecture
 
 ```mermaid
@@ -155,23 +231,36 @@ producing narration — it never has a path back into `D`. See
 
 ## 3. 5-Minute Walkthrough
 
+### Judge Demo Order
+
+This order is chosen for narrative clarity, not because the system
+requires it — see [How Sentinel-X Runs](#how-sentinel-x-runs) for what
+actually depends on what. Judge Mode in particular is an orchestration
+layer over the other screens, not a gate you must pass through first.
+
 A suggested order for seeing the whole loop live, once both servers are
 running ([§21](#21-reproducing-the-results)):
 
 ```
-00:00  Command Center      — global KPIs, LIVE/SANDBOX status
-00:30  Red Team Lab        — pick an attack family, run it against the live model
-01:15  Arena               — trigger hardening, watch evasion rate drop after retrain
-02:00  Blue Team SOC       — color-coded decision feed, click a BLOCK for SHAP + Counterfactual
-02:45  SOC Agent           — ask it to investigate the same flagged transaction
-03:20  Judge Mode          — run the full 11-phase PREPARE→SCORE pipeline in one command
-04:00  Recursive Defense   — certify D0 → D1, watch it attack its own new defense
-04:40  Threat Observatory  — Fraud DNA tree, Economic Impact, STIX export
-05:00  Threat Map          — geographic snapshot of the same evaluation run
+00:00  Command Center        — global KPIs, LIVE/SANDBOX status
+00:30  Payment Twin          — the synthetic world: customers, transactions, behavior
+01:00  Red Team Lab          — pick an attack family, run it against the live model
+01:45  Blue Team SOC         — color-coded decision feed; click a BLOCK for SHAP + Counterfactual + SOC Agent
+02:30  Arena                 — trigger hardening, watch evasion rate drop after retrain
+03:15  Judge Mode            — run the full 11-phase PREPARE→SCORE pipeline in one command
+                                (the Defense Compiler / Policy Simulator step shows up here,
+                                 inside DEFEND/SIMULATE/APPROVE, and on the Command Center's
+                                 policy widgets — there is no separate "Defense Compiler" screen)
+04:00  Recursive Defense     — certify D0 → D1: attack the baseline, then attack the new defense
+04:40  Threat Observatory    — Fraud DNA tree, Economic Impact, STIX export
+04:55  Threat Map            — geographic snapshot of the same evaluation run
+05:00  Takeaway              — most systems prove they can detect fraud;
+                                Sentinel-X also tries to break the defense that detected it
 ```
 
-Every screen pulls from a real running API call — there is no mock-data
-mode in the frontend.
+All operational data displayed by the frontend is sourced from the backend
+APIs; static UI labels and configuration constants (page titles, legends,
+axis units) are not treated as benchmark results.
 
 <!-- Add verified screenshot: Command Center -->
 <!-- Add verified screenshot: Red Team Lab -->
